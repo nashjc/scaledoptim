@@ -1,0 +1,673 @@
+---
+title: "Optimization problems constrained by parameter sums"
+author:
+- John C. Nash, retired professor, Telfer School of Management, University
+  of Ottawa
+- Gabor Grothendieck, GKX Group
+- Ravi Varadhan, Johns Hopkins University Medical School
+date: "2023-7-31"
+output:
+  pdf_document:
+    keep_tex: no
+    toc: no
+bibliography: ./sumscale.bib
+link-citations: yes
+linkcolor: red
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+## require(bookdown) # language engine to display text - does not seem necessary
+```
+
+## Abstract
+
+This article presents a discussion of optimization problems where the 
+objective function $f(\textbf{x})$ has parameters that are constrained by some
+scaling, so that $q(\textbf{x}) = constant$, where this function $q()$ involves
+a sum of the parameters, their squares, or similar simple function. Our focus is
+on ways to use standardized optimization programs to solve such problems rather
+than specialized codes.
+
+## Background
+
+We consider problems where we want to minimize or maximize a function 
+subject to a constraint
+that the sum of some function of the parameters, e.g., their sum of squares, must 
+equal some constant.
+Because these problems all have an objective that is dependent on a 
+scaled set of parameters 
+where the scale is defined by a sum, sum of squares, or similar 
+sum of the paramters, we will
+refer to them as **sumscale** optimization problems.
+
+We have observed questions 
+about problems like this on the R-help mailing list: 
+
+```
+Jul 19, 2012 at 10:24 AM, Linh Tran <Tranlm```berkeley.edu> wrote:
+> Hi fellow R users,
+>
+> I am desperately hoping there is an easy way to do this in R.
+>
+> Say I have three functions:
+>
+> f(x) = x^2
+> f(y) = 2y^2
+> f(z) = 3z^2
+>
+> constrained such that x+y+z=c (let c=1 for simplicity).
+>
+> I want to find the values of x,y,z that will minimize 
+f(x) + f(y) + f(z).
+```
+
+If the parameters $x$, $y$ and $z$ are non-negative, this problem can actually 
+be solved as a Quadratic Program. We revisit this problem at the end of this
+article.
+
+Other examples of this type of objective function are:
+
+- The maximum volume  of a regular polyhedron where the sum of the lengths
+   of the sides is fixed.
+- The minimum negative log likelihood for a multinomial model.
+- The Rayleigh Quotient for the maximal or minimal eigensolutions of a matrix, where
+  the eigenvectors should be normalized so the square norm of the vector is 1.
+- The minimum of the extended Rosenbrock function of the form given by
+  the `adagio` package (@p-adagio) on the unit ball, that is, where 
+  the sum of squares of the parameters is 1.
+
+ <!-- ?? May want to expand -->
+ <!-- this -- Gabor's example is not data dependent, but it would be  -->
+ <!-- nice to have one of these. -->
+
+For the moment, let us consider a basic example, which is 
+
+**Problem A: Minimize  $( - \prod{\textbf{x}})$ subject to $\sum{\textbf{x}}=1$**
+
+This is a very simplified version of the multinomial maximum likelihood problem. 
+
+
+## Difficulties using general optimization with sumscale problems
+
+Let us use the basic example above to consider how we might formulate Problem A for a
+computational solution in R. 
+
+One possibility is to select one of the parameters and solve for it in 
+terms of the others. Let this
+be the last parameter $x_n$, so that the set of parameters to be 
+optimized is $\textbf{y} = (x_1, x_1, ..., x_{n-1})$ where 
+$n$ is the original size of our problem. We now have the unconstrained problem
+
+$$ minimize ( - (\prod{\textbf{y}}) * (1 - \sum{y} ) ) $$
+
+This is easily coded and tried. We will use a very simple start, namely, the sequence 
+$1,2, ..., (n-1)$ scaled by $1/n^2$. We will also specify that the gradient is to be
+computed by a central approximation (see `gcentral.R` from package **optimx**).
+
+```{r simpleproduct, echo=TRUE}
+require(optimx, quietly=TRUE)
+pr <- function(y) {
+- prod(y)*(1-sum(y))
+}
+cat("test the simple product for n=5\n")
+meth <- c("Nelder-Mead", "BFGS")
+n<-5
+  st<-1:(n-1)/(n*n)
+   ans<-opm(st, pr, gr="grcentral", control=list(trace=0))
+   ao<-summary(ans,order=value)
+print(ao)
+```
+
+
+While these codes work fine for small $n$, it is fairly easy to see that there are 
+computational problems as the size of the problem increases. Since the sum of the 
+parameters is constrained to be equal to 1, the parameters are of the order of $1/n$,
+and the function therefore of the order of $1/(n^n)$, which underflows around $n=144$ 
+in R. 
+
+## Other formulations
+
+Traditionally, statisticians solve maximum likelihood problems by \textbf{minimizing} 
+the negative log-likelihood. That is, the objective function is formed as (-1) times
+the logarithm of the likelihood. This converts our product to a sum. Choosing the first
+parameter to be the one determined by the summation constraint, we can write the 
+function and gradient quite easily. As programs that try to find the minimum may change
+the parameters so that logarithms of non-positive numbers are attempted, we have put
+some safeguards in the function `nll`. At this point we have assumed the gradient
+calculation is only attempted if the function can be computed satisfactorily, so we 
+have not put safeguards in the gradient.
+
+```{r gabornll, echo=TRUE}
+nll <- function(y) {
+  if ((any(y <= 10*.Machine$double.xmin)) || (sum(y)>1-.Machine$double.eps))
+         .Machine$double.xmax
+  else   - sum(log(y)) - log(1-sum(y))
+}
+nll.g <- function(y) { - 1/y + 1/(1-sum(y))} # so far not safeguarded
+n<-5
+x0<-(2:n)/n^2
+library(numDeriv)
+dx0<-nll.g(x0)
+dx0n<-grad(nll, x0)
+cat("Max Abs diff between analytic and approx. gradient =",max(abs(dx0-dx0n)),"\n")
+```
+
+We can easily try several optimization methods using the `optimx` package. 
+Here are the calls, which overall did not perform as well as we would like. Note 
+that we do not ask for
+`method="ALL"` as we found that some of the methods, in particular those using Powell's
+quadratic approximation methods, seem to get "stuck". Instead, we have specified a list
+of methods `mset`, though some of these also run into scaling problems.
+
+```{r C13badruns1, echo=TRUE}
+require(optimx, quietly=TRUE)
+mset<-c("L-BFGS-B", "BFGS", "CG", "spg", "ucminf", "nlm", "nlminb", "nvm", "ncg", "tnewt")
+# numerical approximation using forward difference
+a5<-opm(2:n/n^2, nll, gr="grfwd", method=mset, 
+          control=list(dowarn=FALSE, kkt=FALSE,trace=0))
+summary(a5, order=value)
+# analytical gradient
+a5g<-opm(2:n/n^2, nll, nll.g, method=mset, 
+          control=list(dowarn=FALSE,kkt=FALSE, trace=0))
+summary(a5g, order=value)
+# analytical gradient and bounds on parameters 
+a5gb<-opm(2:n/n^2, nll, nll.g, lower=0, upper=1, method=mset, 
+          control=list(dowarn=FALSE,kkt=FALSE,trace=0))
+summary(a5gb, order=value)
+```
+
+Most, but not all, of the methods find the solution for the $n=5$ case. 
+The exception (L-BFGS-B) is due to the optimization method trying to compute 
+the gradient where sum(x) is greater than 1. We have not tried to determine 
+the source of this particular issue. However, it is almost certainly 
+a consequence of too large a step. The particular form of $log(1-sum(x))$ 
+is undefined once the argument of the logarithm is negative. Indeed, this 
+is the basis of logarithmic barrier functions for constraints. There
+is a similar issue with the $n-1$ parameters near zero. Negative values 
+will cause difficulties. 
+
+Numerical gradient approximations will similarly fail, 
+particularly as step sizes are often of the order
+of 1E-7 in size. There is generally no special check within numerical 
+gradient routines to apply bounds. 
+Note also that a lower bound of 0 on parameters is not adequate, 
+since $log(0)$ is undefined. Choosing a
+bound large enough to avoid the logarithm of a zero or negative argument 
+while still being small enough 
+to allow for parameter optimization is non-trivial.
+
+
+## Transformed problems or parameters
+
+When problems give difficulties, it is common to re-formulate them by transformations of the function
+or the parameters. 
+
+### Using a projection
+
+Objective functions defined by 
+$(-1)*\prod{\textbf{x}}$ or $(-1)*\sum{log(\textbf{x})}$ will change 
+with the scale of the parameters. Moreover, the constraint $\sum{\textbf{x}}=1$ 
+effectively imposes the scaling 
+$$ \textbf{x}_{scaled} = \textbf{x}/\sum{\textbf{x}}$$
+The optimizer `spg` from package `BB` allows us to project our search 
+direction to satisfy constraints. Thus, we could use the following approach. 
+
+<!-- Thanks to Ravi Varadhan for the suggestion. ?? now an author-->
+
+```{r C13ravi1, echo=TRUE}
+require(BB, quietly=TRUE)
+nllrv <- function(x) {- sum(log(x))}
+nllrv.g <- function(x) {- 1/x }
+proj <- function(x) {x/sum(x)}
+n <- 5
+aspg <- spg(par=(1:n)/n^2, fn=nllrv, gr=nllrv.g, project=proj, 
+            control=list(trace=TRUE, triter=1))
+aspgn <- spg(par=(1:n)/n^2, fn=nllrv, project=proj, 
+             control=list(trace=TRUE, triter=1)) # using internal grad approx.
+cat("F_optimal: with gradient=",aspg$value,"  num. approx.=",aspgn$value,"\n")
+pbest<-rep(1/n, n)
+cat("fbest = ",nllrv(pbest),"  when all parameters = ", pbest[1],"\n")
+cat("deviations:  with gradient=",max(abs(aspg$par-pbest)),
+    "   num. approx.=",max(abs(aspg$par-pbest)),"\n")
+```
+
+Here the projection `proj` is the key to success of method 
+`spg`. Other methods (as yet) do not have the flexibility to impose 
+the projection directly. 
+We would need to carefully build the projection into
+the function(s) and/or the method codes. 
+This was done by @Geradin71 for the Rayleigh quotient 
+problem, but requires a number of changes to the program code.
+Why `spg()` does (for this case) much better using the internal 
+numerical gradient approximation than the analytic gradient is an
+open question.
+
+### log() transformation of parameters
+
+A common method to ensure parameters are positive is to transform 
+them. In the present case, optimizing over
+parameters that are the logarithms of the parameters above 
+ensures we have positive arguments to most of the
+elements of the negative log likelihood. Here is the code. 
+Note that the parameters used in optimization
+are "lx" and not x.
+
+```{r expgabor, echo=TRUE}
+enll <- function(lx) {
+    x<-exp(lx)
+    fval<-  - sum( log( x/sum(x) ) ) 
+}
+enll.g <- function(lx){
+    x<-exp(lx)
+    g<-length(x)/sum(x) - 1/x
+    gval<-g*exp(lx)
+}
+```
+
+But where is our constraint? Here we have noted that we could define the objective 
+function only to within the scaling  $\textbf{x}/\sum(\textbf{x})$. There is a minor 
+nuisance, in that we need to re-scale our 
+parameters after solution to have them in a standard form. 
+This is most noticeable if one uses `optimx`
+and displays the results of `all.methods`. In the following, we
+extract the best solution for the 5-parameter problem.
+
+```{r expgabrun1, warning=FALSE, echo=TRUE}
+require(optimx, quietly=TRUE) # just to be sure
+st<-1:5/10 # 5 parameters, crude scaling to start
+a5x<-opm(st, enll, enll.g, method="MOST", control=list(trace=0))
+a5x<-a5x[order(a5x$value),]
+cat("Proposed best solution has minimum=",a5x[1,length(st)+1],"\n")
+cat("Coeffs:")
+print(a5x[1,1:length(st)])
+```
+
+While there are reasons to think that the indeterminacy
+might upset the optimization codes, in practice, the objective 
+and gradient above are generally
+well-behaved, though they did reveal that tests of the size 
+of the gradient used, in particular, to
+decide to terminate iterations in `Rcgmin()` were too 
+hasty in stopping progress for problems
+with larger numbers of parameters. A user-specified tolerance is now allowed; for
+example `control=list(tol=1e-12)`. 
+
+Let us try a larger problem in 100 parameters.
+
+```{r expgabrun2, warning=FALSE, echo=TRUE}
+require(optimx, quietly=TRUE)
+st<-1:100/1e3 # large
+stenll<-enll(st)
+cat("Initial function value =",stenll,"\n")
+tym<-system.time(acgbig<-Rcgmin(st, enll, enll.g, 
+                                control=list(trace=0, tol=1e-32)))[[3]]
+cat("Time = ",tym,"  fval=",acgbig$value,"\n")
+xnor<-acgbig$par/sum(acgbig$par)
+print(xnor)
+```
+
+One worrying aspect of the solution is that the objective function 
+at the start and end differ by a tiny amount. 
+
+### Another transformation
+
+A slightly different transformation or projection is inspired by spherical 
+coordinates.
+
+```{r sphere5, echo=TRUE}
+library(optimx)
+proj2 <- function(theta) {
+    theta2 <- theta^2
+    s2 <- theta2 / (1 + theta2)
+    cumprod(c(1, s2)) * c(1-s2, 1)
+ }
+obj <- function(theta) - sum(log(proj2(theta)))
+ n <- 5
+ ans <- spg(seq(n-1), obj)
+ proj2(ans$par)
+```
+
+
+```{r sphere100, echo=TRUE}
+n<-100
+# check 
+obj(seq(n-1))
+ans100 <- spg(seq(n-1), obj, control=list(trace=FALSE), quiet=TRUE)
+ans100$value
+proj2( (ans100$par) )
+```
+
+Since this transformation is embedded into the objective function, we could run all the
+optimizers in `optimx` as follows. This takes some time, as the derivative-free
+methods appear to have more difficulty with this formulation. Moreover, `Rcgmin`
+and `Rvmmin` are not recommended when an analytic gradient is not provided.
+
+```{r sphere100all, echo=TRUE}
+# turn off kkt to save time
+tmeth<-c("ncg", "nvm", "lbfgs", "ucminf", "bobyqa", "tnewt", "slsqp")
+mfv<-10*(n-1)^2 # set fn eval count big enough to avoid commonArgs error (bobyqa)
+allansf<- opm(seq(n-1)/n, obj, gr="grfwd", method=tmeth, 
+              control=list(kkt=FALSE, dowarn=FALSE,maxfeval=mfv))
+summary(allansf, order = "list(round(value, 3), fevals)", par.select = FALSE)
+allansc<- opm(seq(n-1)/n, obj, gr="grcentral", method=tmeth, 
+              control=list(kkt=FALSE, dowarn=FALSE,maxfeval=mfv))
+summary(allansc, order = "list(round(value, 3), fevals)", par.select = FALSE)
+allansp<- opm(seq(n-1)/n, obj, gr="grpracma", method=tmeth, 
+              control=list(kkt=FALSE, dowarn=FALSE,maxfeval=mfv))
+summary(allansp, order = "list(round(value, 3), fevals)", par.select = FALSE)
+```
+
+Note that the more accurate gradient approximations appear to give slightly
+better results.
+
+<!-- ?? Can we develop analytic gradient? -->
+
+### Use the gradient equations
+
+Another approach is to "solve" the gradient equations. We can do this with 
+a sum of squares minimizer, though the `nls` function in R is 
+specifically NOT useful as it cannot, by default, deal
+with small or zero residuals. However, `nlfb` 
+from package `nlsr` is capable of dealing
+with such problems. Unfortunately, it will be slow as it has to 
+generate the Jacobian by numerical
+approximation unless we can provide a function to prepare the 
+Jacobian analytically. Moreover,
+the determination of the Jacobian is still subject to 
+the unfortunate scaling issues we have
+been confronting throughout this article.
+
+This approach is yet to be tried.
+
+## The Rayleigh Quotient
+
+The maximal and minimal eigensolutions of a symmetric matrix $A$ are extrema of the Rayleigh Quotient
+
+$$ R(x) =  (x' A x)  / (x' x) $$
+
+We can also deal with generalized eigenproblems of the form 
+
+$$A x = e B x$$
+
+where B is symmetric and positive definite by using the Rayleigh Quotient
+
+$$ R_g(x) =  (x' A x)  / (x' B x) $$
+
+Once again, the objective is scaled by the parameters, this time by their 
+sum of squares. Alternatively, 
+we may think of requiring the **normalized** eigensolution, which is given as 
+$$ x_{normalized} = x/sqrt(x' x) $$
+We will first try the projected gradient method `spg` from `BB`. 
+Below is the code, where our test uses
+a matrix called the Moler matrix @{cnm79}[Appendix 1]. This matrix is simple
+to generate and is positive definite, but has one small eigenvalue that may
+not be computed to high relative precision. That is, we may get a
+number that is precise relative to the largest eigenvalue, but having few
+trustworthy digits.
+
+Let us set up some infrastructure for the Rayleigh Quotient of the 
+matrix. 
+
+```{r rayquosetup, echo=TRUE}
+molerbuild<-function(n){ # Create the moler matrix of order n
+   # A[i,j] = i for i=j, min(i,j)-2 otherwise
+   A <- matrix(0, nrow = n, ncol = n)
+   j <- 1:n
+   for (i in 1:n) {
+      A[i, 1:i] <- pmin(i, 1:i) - 2
+   }
+   A <- A + t(A)
+   diag(A) <- 1:n
+   A
+}
+
+raynum<-function(x, A){
+   raynum<-as.numeric((t(x)%*%A)%*%x)
+}
+
+RQ <- function(x, A){
+  RQ <- raynum(x, A)/sum(x*x)
+}
+
+# proj<-function(x) { x/sqrt(sum(x*x)) } # Original
+proj <- function(x) {sign(x[1]) * x/sqrt(c(crossprod(x))) } # from ravi
+
+# proj1 <- function(x) {sign(x[1]) * x/max(x)} # no use!
+```
+
+Let us now try to use `BB::spg()` to find the largest eigenvalue by minimizing
+the Rayleigh Quotient of $-A$.
+
+```{r rqbig}
+require(BB, quietly=TRUE)
+n<-10
+set.seed(4321)
+x<-runif(n)
+AA<-molerbuild(n)
+cat("Eigenvalues from eigen:")
+meig<-eigen(AA)
+print(meig$values)
+cat("Vector for smallest ev:")
+vecmin<-meig$vectors[,n]
+print(vecmin)
+cat("RQ for minimal eigenvector=",raynum(vecmin,AA))
+x<-proj(x)  # Need to have parameters feasible
+tmax<-system.time(asprqmax<-spg(x, fn=raynum, project=proj, A=-AA,
+    control=list(trace=TRUE, triter=1,maxit=1000)))[[3]]
+asprqmax
+cat("Maximal eigenvalue is calculated as ", -asprqmax$value,"\n")
+cat("Compare eigen:",meig$values[1],"  difference=",-asprqmax$value-meig$values[1], "\n")
+xy <- rep(1/sqrt(n), n)
+tmax2<-system.time(asprqmax2<-spg(xy, fn=raynum, project=proj, A=-AA,
+    control=list(trace=TRUE, triter=1,maxit=1000)))[[3]]
+cat("maximal eigensolution: Value=",-asprqmax2$value,"in time ",tmax2,"\n")
+print(asprqmax2$par)
+```
+
+```{r rqmin}
+tmin<-system.time(asprqmin<-spg(x, fn=raynum, project=proj, A=AA,
+    control=list(trace=TRUE, triter=1,maxit=1000)))[[3]]
+cat("minimal eigensolution: Value=",asprqmin$value,"in time ",tmin,"\n")
+# print(asprqmin$par)
+# Compare
+cat("Diff from value from eigen():", (asprqmin$value-meig$values[n]))
+# cat("Vector difference:"); asprqmin$par - meig$vectors[,n]
+# cat("Max abs relative difference=",max(abs((asprqmin$value-meig$values[n])/(abs(meig$values)+1e-18))),"\n")
+```
+
+If we ignore the constraint, and simply perform the optimization, we can sometimes
+get satisfactory solutions, though comparisons require that we normalize 
+the parameters post-optimization. We can check if the scale of the eigenvectors 
+is becoming large by computing the norm of the final parameter vector. In 
+tests on the Moler matrix up to dimension 100, none grew to a worrying size.
+
+For comparison, we also ran a specialized Geradin routine as implemented in R by 
+one of us (JN). This gave equivalent answers, albeit more efficiently. For those 
+interested, the Geradin routine is available as referenced in @RQtimes12.
+
+## The extended Rosenbrock function on the unit ball
+
+The `adagio` package (@p-adagio) gives an extended version of the 
+Rosenbrock banana-shaped valley problem. This becomes a sumscale problem
+if we constrain the parameters to be on the unit ball, that is, where 
+the sum of squares of the parameters is 1.
+
+```{r rosbkball1}
+library(alabama)
+library(optimx)
+library(nloptr)
+library(BB)
+####################################
+# Minimizing a function on the unit ball:  Min f(x), s.t. ||x|| = 1
+#
+rosbkext.f <- function(x){
+    p <- x
+    n <- length(p)
+    sum (100*(p[1:(n-1)]^2 - p[2:n])^2 + (p[1:(n-1)] - 1)^2)
+}
+
+heq <- function(x){
+    1 - sum(x*x)
+}
+
+transform <- function(x){
+# transforms x into z such that ||z|| = 1
+    p <- length(x)
+    z <- rep(NA, p)
+    z[1] <- cos(x[1])
+    z[p] <- prod(sin(x[-p]))
+    if (p > 2) z[2:(p-1)] <- cumprod(sin(x[1:(p-2)]))*cos(x[2:(p-1)])
+    return(z)
+}
+
+rosbkext.t <- function(x){
+    n <- length(x)
+    p <- transform(x)
+    sum (100*(p[1:(n-1)]^2 - p[2:n])^2 + (p[1:(n-1)] - 1)^2)
+}
+
+ProjSphere <- function(x){
+    x/sqrt(sum(x*x))
+}
+
+ProjSpheresgn <- function(x){
+    sign(x[1])*x/sqrt(sum(x*x))
+}
+    
+n <- 10
+set.seed(1234)
+p0 <- runif(n, 0, 3)
+
+# Unconstrained optimization with parameter transformation to satisfy unit-length constraint
+#
+ans <- optim(par=p0, fn=rosbkext.t, method="BFGS", control=list(maxit=1000))
+proptimr(ans)
+system.time(ans2 <- alabama::auglag(p0, rosbkext.f, heq=heq, control.outer = list(trace=FALSE, kktchk=FALSE)))
+proptimr(ans2)
+system.time(ans3 <- nloptr::slsqp(p0, rosbkext.f, heq=heq))
+proptimr(ans3)
+
+system.time(ans4 <- spg(p0, rosbkext.f, project=ProjSphere))
+proptimr(ans4)
+system.time(ans4a <- spg(p0, rosbkext.f, project=ProjSpheresgn))
+proptimr(ans4a)
+
+c(ans$value, ans2$value, ans3$value, ans4$value, ans4a$value)
+
+sevmeth <- c("ncg", "nvm", "BFGS", "L-BFGS-B", "tnewt", "ucminf", "spg")
+several <- opm(p0, fn=rosbkext.t, gr="grcentral", method=sevmeth, control=list(trace=0))
+sumrbk<-summary(several, order=value, par.select=1:5)
+print(sumrbk)
+stp <- function(xx, fn){
+  # standardize parameters in an opm output data-frame and check fn
+  nr <- dim(xx)[1]
+  npar <- which(colnames(xx)=="value") - 1
+  newxx <- xx[, 1:(npar+1)]
+  rownames(newxx)<-rownames(xx)
+  colnames(newxx)<-colnames(xx)[1:(npar+1)]
+  for (ii in 1:nr){
+    meth <- rownames(xx)[ii]
+    upar <- coef(xx[ii, ])
+    tpar <- transform(upar) # spherical transform
+    fval <- fn(upar)
+    newxx[ii, 1:npar] <- tpar
+    newxx[ii, npar+1] <- fval
+    cat(meth," fval=",fval," at "); print(tpar[1:5])
+  }
+  newxx
+}
+tt<-stp(several, rosbkext.t)
+print(tt)
+###################################    
+```
+Here we note that the `spg()` method that works well with a suitable projection, does much less well on 
+the unconstrained minimization of the transformed objective `rosbkext.t()`.
+
+
+## The R-help example
+
+As a final example, let us use our present techniques to solve the 
+problem posed by Lanh Tran on R-help. We will use
+only a method that scales the parameters directly inside the objective function and 
+not bother with gradients for this small problem. 
+
+```{r tran1, echo=TRUE}
+ssums<-function(x){
+  n<-length(x)
+  tt<-sum(x)
+  ss<-1:n
+  xx<-(x/tt)*(x/tt)
+  sum(ss*xx)
+}
+
+cat("Try penalized sum\n")
+require(optimx)
+st<-runif(3)
+aos<-opm(st, ssums, gr="grcentral", method="MOST")
+# rescale the parameters
+nsol<-dim(aos)[1]
+for (i in 1:nsol){ 
+  tpar<-aos[i,1:3] 
+  ntpar<-sum(tpar)
+  tpar<-tpar/ntpar
+#  cat("Method ",aos[i, "meth"]," gives fval =", ssums(tpar))
+  aos[i, 1:3]<-tpar 
+}
+summary(aos,order=value)[1:5,]
+```
+
+```{r transpg1, echo=TRUE}
+ssum<-function(x){
+  n<-length(x)
+  ss<-1:n
+  xx<-x*x
+  sum(ss*xx)
+}
+proj.simplex <- function(y) {
+# project an n-dim vector y to the simplex Dn
+# Dn = { x : x n-dim, 1 >= x >= 0, sum(x) = 1}
+# Ravi Varadhan, Johns Hopkins University
+# August 8, 2012
+n <- length(y)
+sy <- sort(y, decreasing=TRUE)
+csy <- cumsum(sy)
+rho <- max(which(sy > (csy - 1)/(1:n)))
+theta <- (csy[rho] - 1) / rho
+return(pmax(0, y - theta))
+}
+as<-spg(st, ssum, project=proj.simplex)
+cat("Using project.simplex with spg: fmin=",as$value," at \n")
+print(as$par)
+```
+
+Apart from the parameter rescaling, this is an entirely "doable" problem. 
+Note that we can also solve the problem as a Quadratic Program using
+the `quadprog` package.
+
+```{r label=TranQP, echo=TRUE}
+library(quadprog)
+Dmat<-diag(c(1,2,3))
+Amat<-matrix(c(1, 1, 1), ncol=1)
+bvec<-c(1)
+meq=1
+dvec<-c(0, 0, 0)
+ans<-solve.QP(Dmat, dvec, Amat, bvec, meq=0, factorized=FALSE)
+ans
+```
+
+## Conclusion
+
+Sumscale problems can present difficulties for optimization (or function minimization)
+codes. These difficulties are by no means insurmountable, but they do require some 
+attention.
+
+While specialized approaches are "best" for speed and correctness, a general user 
+is more likely to benefit from a simpler approach of embedding the scaling in the
+objective function and rescaling the parameters before reporting them. We also
+note that the use of a projected gradient via `spg` from package `BB` works
+very well, but the projection needs to be set up carefully, as with the use of
+the sign of the first element in dealing with the Rayleigh Quotient.
+
+## References
