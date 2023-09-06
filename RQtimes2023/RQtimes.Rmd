@@ -1,0 +1,1053 @@
+---
+title: "Timing Rayleigh Quotient minimization in R"
+date: "2023-9-6"
+abstract:
+  This vignette is simply to record the methods and results for timing
+  various Rayleigh Quotient minimizations with R using different functions
+  and different ways of running the computations, in particular trying Fortran
+  subroutines and the R byte compiler. It has been updated from a 2012
+  document to reflect changes in R and its packages that make it awkward to
+  reprocess the original document on newer computers.
+draft: true
+author:
+    - name: John C. Nash
+      affiliation: retired professor, University of Ottawa
+      address:
+      - Telfer School of Management
+      - Ottawa ON Canada K1N 6N5
+      orcid: 0000-0002-2762-8039
+      email: profjcnash@gmail.com
+type: package
+output: 
+  rjtools::rjournal_web_article:
+      self_contained: yes
+      toc: no
+bibliography: ../sumscale.bib
+link-citations: yes
+linkcolor: red
+urlcolor: blue
+---
+
+```{r setup, echo=FALSE}
+mbt<-2 # default to 10 repetitions in microbenchmark
+```
+
+```{r optansout, echo=FALSE}
+# If needed, since it was 
+optansout <- function(ansdf, filename) {
+    ##### OPEN ISSUES: (any date order)
+    
+    ##### IMPLEMENTED: (reverse date order)
+    
+    # A funtion to display and print to file (if present) the
+    #   output of optimx
+    if (!is.null(filename)) {
+        sink(filename)
+    }
+    # if (! exists(filename)) { sink(filename) } # may need to
+    #   check paths
+    tpar <- ansdf$par
+    tdf <- ansdf
+    ltvec <- length(tpar[[1]])
+    for (i in 1:length(tpar)) {
+        tvec <- tpar[[i]]
+        ltvec <- length(tvec)
+        if (ltvec > 5) {
+            tvec <- tvec[1:5]
+        }
+        tpar[[i]] <- tvec
+    }
+    tdf$par <- tpar
+    pardf <- tdf[1]
+    if (ltvec > 5) {
+        names(pardf)[1] <- "first.5.par"
+    }
+    else {
+        names(pardf)[1] <- "par"
+    }
+    print(pardf)
+    tdf$par <- NULL
+    print(tdf)
+    if (!is.null(filename)) {
+        sink()
+    }
+    # if (! exists(filename)) { sink() } # to turn it off
+    rm(tdf)
+    rm(tpar)
+    return(TRUE)
+}
+```
+
+## The computational task
+
+The maximal and minimal eigensolutions of a symmetric matrix $A$ are extrema of the Rayleigh Quotient
+
+$$ R(x) =  (x' A x)  / (x' x) $$
+
+We could also deal with generalized eigenproblems of the form 
+
+$$A x = e B x$$
+
+where $B$ is symmetric and positive definite by using the Rayleigh Quotient (RQ)
+
+$$ R_g(x) =  (x' A x)  / (x' B x) $$
+
+In this document, $B$ will always be an identity matrix, but some programs we test
+assume that it is present.
+
+Note that the objective is scaled by the parameters, in fact by by their 
+sum of squares. Alternatively, 
+we may think of requiring the **normalized** eigensolution, which is given as 
+
+$$ x_{normalized} = x/sqrt(x' x) $$
+
+## Timings and speedups
+
+In R, execution times can be measured by the function `system.time},
+and in particular the third element of the object this function returns. 
+However, various factors influence computing times in a modern computational
+system, so we generally want to run replications of the times. The R packages
+\pkg{rbenchmark} and \pkg{microbenchmark} can be used for this. I have a 
+preference for the latter. However, to keep the time to prepare this vignette
+with \pkg{Sweave} or \pkg{knitR} reasonable, many of the timings will be
+done with only `system.time}.
+
+There are some ways to speed up R computations. 
+
+- The code can be modified to use more efficient language structures. We
+show some of these below, in particular, to use vector operations.
+- We can use the R byte code compiler by Luke Tierney, which has been 
+part of the R distribution since version 2.14.
+- We can use compiled code in other languages. Here we show how Fortran
+subroutines can be used.
+
+
+## Our example matrix
+
+We will use a matrix called the Moler matrix \cite[Appendix 1]{cnm79}. 
+This is a positive definite
+symmetric matrix with one small eigenvalue. We will show a couple of 
+examples of computing the small eigenvalue solution, but will mainly
+perform timings using the maximal eigenvalue solution, which we will
+find by minimizing the RQ of (-1) times the matrix. (The eigenvalue
+of this matrix is the negative of the maximal eigenvalue of the 
+original, but the eigenvectors are equivalent to within a scaling
+factor for non-degenerate eigenvalues.)
+
+Here is the code for generating the Moler matrix.
+
+```{r molermat, echo=TRUE}
+molermat<-function(n){
+   A<-matrix(NA, nrow=n, ncol=n)
+   for (i in 1:n){
+      for (j in 1:n) {
+          if (i == j) A[i,i]<-i
+          else A[i,j]<-min(i,j) - 2
+      }
+   }
+   A
+}
+```
+
+However, since R is more efficient with vectorized code, the following routine by 
+Ravi Varadhan should do much better.
+
+```{r molerfast, echo=TRUE}
+molerfast <- function(n) {
+# A fast version of `molermat'
+  A <- matrix(0, nrow = n, ncol = n)
+  j <- 1:n
+  for (i in 1:n) {
+    A[i, 1:i] <- pmin(i, 1:i) - 2
+  }
+  A <- A + t(A)
+  diag(A) <- 1:n
+  A
+}
+```
+
+### Time to build the matrix
+
+Let us see how long it takes to build the Moler matrix of different sizes.
+In 2012 we used the byte-code compiler, but that now seems to be active by
+default and NOT to give worthwhile improvements.
+We also include times for the `eigen()` function that computes
+the full set of eigensolutions very quickly.
+
+```{r molertime, echo=FALSE}
+require(microbenchmark)
+nmax<-10
+mtable<-matrix(NA, nrow=nmax, ncol=5) # to hold results
+# loop over sizes
+for (ni in 1:nmax){
+  n<-50*ni
+  mtable[[ni, 1]]<-n
+  # Note "unit" argument is ONLY for display. time is in nanoseconds
+  ti<-microbenchmark(ai<-molermat(n), unit="us", times=mbt)$time
+  tfi<-microbenchmark(afi<-molerfast(n), unit="us", times=mbt)$time
+  if (! identical(ai, afi)) stop("Different outcomes == molermat, molerfast")
+  osize<-object.size(ai)
+  tevs<-microbenchmark(evs<-eigen(ai), unit="us", times=mbt)$time
+  mtable[[ni,2]]<-mean(ti)*0.001 # times in millisecs
+  mtable[[ni,3]]<-osize
+  mtable[[ni,4]]<-mean(tevs)*0.001
+  mtable[[ni,5]]<-mean(tfi)*0.001
+#  cat(n, ti, osize,"\n")
+}
+```
+
+```{r molertimedisp, echo=FALSE}
+bmattym<-data.frame(n=mtable[,1], buildi=mtable[,2],  
+     osize=mtable[,3], eigentime=mtable[,4], bfast=mtable[,5])
+print(round(bmattym,0))
+cat("buildi - interpreted build time\n")
+cat("osize - matrix size in bytes; eigentime - all eigensolutions time\n")
+cat("bfast - interpreted vectorized build time\n")
+cat("Times converted to milliseconds\n")
+```
+It does not appear that the compiler has much effect, or else it is being automatically invoked.
+
+We can graph the times. The code, which is not 
+echoed here, also models the times and the object size
+created as almost perfect quadratic models in `n`. However,
+the vectorized code is much, much faster, and the byte code
+compiler does not appear to help.
+
+```{r drawtime1, echo=FALSE}
+ti<-as.vector(mtable[,2])
+tf<-as.vector(mtable[,5])
+os<-as.vector(mtable[,3])
+n<-as.vector(mtable[,1])
+plot(n, ti)
+xx<-1:max(mtable[,1])
+n2<-n*n
+itime<-lm(ti~n+n2)
+summary(itime)
+ftime<-lm(tf~n+n2)
+summary(ftime)
+iti<-coef(itime)
+yy<-iti[1]+iti[2]*xx+iti[3]*xx*xx
+points(xx,yy, type='l')
+fti<-coef(ftime)
+ww<-fti[1]+fti[2]*xx+fti[3]*xx*xx
+points(n, tf, col='red')
+points(xx, ww, type='l', col='red')
+title(main="Execution time vs matrix size")
+title(sub="molermat (black) and molerfast (red) matrix builds")
+```
+
+```{r drawtime2, echo=FALSE}
+
+osize<-lm(os~n+n2)
+summary(osize)
+cos<-coef(osize)
+zz<-cos[1]+cos[2]*xx+cos[3]*xx*xx
+plot(n, os)
+points(xx, zz, type='l')
+title(main="Execution time vs matrix size")
+title(sub="eigen() on Moler matrix")
+```
+
+
+## Computing the Rayleigh Quotient
+
+The Rayleigh Quotient requires the quadratic form $x' A x$ divided
+by the inner product $x' x$. R lets us form this in several ways. 
+
+```{r rqdir, echo=TRUE}
+rqdir<-function(x, AA){
+  rq<-0.0
+  n<-length(x) # assume x, AA conformable
+  for (i in 1:n) {
+     for (j in 1:n) {
+        rq<-rq+x[i]*AA[[i,j]]*x[j] # Note - sign
+     }
+  }
+  rq
+}
+```
+
+Somewhat better (as we shall show below) is
+
+```{r raynum1, echo=TRUE}
+ray1<-function(x, AA){
+    rq<-  t(x)%*%AA%*%x
+}
+```
+
+and (believed) better still is 
+
+```{r raynum2, echo=TRUE}
+ray2<-function(x, AA){
+    rq<-  as.numeric(crossprod(x, crossprod(AA,x)))
+}
+```
+
+Note that we could implicitly include the minus sign in these
+routines to allow for finding the maximal eigenvalue by minimizing
+the Rayleigh Quotient of $-A$. However, such shortcuts often rebound when
+the implicit negation is overlooked.
+
+If we already have the inner product $ A x$ as vector `ax` from some other 
+computation, then we can simply use 
+
+```{r raynum3, echo=TRUE}
+ray3<-function(x, AA, ax=axftn){
+    # ax is a function to form AA%*%x 
+    rq<- - as.numeric(crossprod(x, ax(x, AA)))
+}
+```
+
+## Matrix-vector products
+
+In generating the RQ, we do not actually need the matrix itself, 
+but simply the inner product with a vector `x}, from which 
+a second inner produce with `x} gives us the quadratic form
+$ x' A x$. If `n} is the order of the problem, then for large
+`n}, we avoid storing and manipulating a very large matrix if
+we use \B{implicit inner product} formation. We do this with the
+following code. For future reference, we include the multiplication
+by an identity. 
+
+```{r axm, echo=TRUE}
+ax<-function(x, AA){
+   u<- as.numeric(AA%*%x)
+}
+
+axx<-function(x, AA){
+   u<- as.numeric(crossprod(AA, x))
+}
+```
+
+Note that second argument, supposedly communicating the matrix which is
+to be used in the matrix-vector product, is ignored in the following
+implicit product routine. It is present only to provide a common syntax
+when we wish to try different routines within other computations.
+
+```{r aximp, echo=TRUE}
+aximp<-function(x, AA=1){ # implicit moler A*x
+   n<-length(x)
+   y<-rep(0,n)
+   for (i in 1:n){
+      tt<-0.
+      for (j in 1:n) {
+          if (i == j) tt<-tt+i*x[i]
+          else tt<-tt+(min(i,j) - 2)*x[j]
+      }
+      y[i]<-tt 
+   }
+   y
+}
+ident<-function(x, B=1) x # identity
+```
+
+However, Ravi Varadhan has suggested the following vectorized code for
+the implicit matrix-vector product.
+
+```{r axmfcode, echo=TRUE}
+axmolerfast <- function(x, AA=1) {
+# A fast and memory-saving version of A%*%x  
+# For Moler matrix. Note we need a matrix argument to match other functions
+n <- length(x)
+j <- 1:n
+ax <- rep(0, n)
+for (i in 1:n) {
+term <- x * (pmin(i, j) - 2)
+ax[i] <- sum(term[-i]) 
+}
+ax <- ax + j*x
+ax
+}
+```
+
+We can also use external language routines, for example in Fortran. 
+However, this needs a Fortran \B{subroutine} which outputs the result as one of
+the returned components. The subroutine is in file `moler.f}.
+
+```
+      subroutine moler(n, x, ax)
+      integer n, i, j
+      double precision x(n), ax(n), sum
+c     return ax = A * x for A = moler matrix
+c     A[i,j]=min(i,j)-2 for i<>j, or i for i==j
+      do 20 i=1,n
+         sum=0.0
+         do 10 j=1,n
+            if (i.eq.j) then
+               sum = sum+i*x(i)
+            else
+               sum = sum+(min(i,j)-2)*x(j)
+            endif
+ 10      continue
+         ax(i)=sum
+ 20   continue
+      return
+      end
+```
+
+This is then compiled in a form suitable for R use by the command (this
+is a command-line tool, and was run in Ubuntu Linux in a directory containing
+the file `{moler.f` but outside this vignette):
+
+```
+R CMD SHLIB moler.f
+```
+
+This creates files `{moler.o` and `{moler.so}, the latter being the
+dynamically loadable library we need to bring into our R session. 
+
+```{r axftn, echo=TRUE}
+dyn.load("moler.so")
+cat("Is the mat multiply loaded? ",is.loaded("moler"),"\n")
+
+axftn<-function(x, AA=1) { # ignore second argument
+   n<-length(x) # could speed up by having this passed
+   vout<-rep(0,n) # purely for storage
+   res<-(.Fortran("moler", n=as.integer(n), x=as.double(x), vout=as.double(vout)))$vout
+}
+```
+
+We can also byte compile each of the routines above
+
+<!-- <<cmpfns, echo=TRUE, cache=TRUE>>= -->
+<!-- require(compiler) -->
+<!-- axc<-cmpfun(ax) -->
+<!-- axxc<-cmpfun(axx) -->
+<!-- axftnc<-cmpfun(axftn) -->
+<!-- aximpc<-cmpfun(aximp) -->
+<!-- axmfc<-cmpfun(axmolerfast) -->
+<!-- @    ---  not useful as at 2023 -->
+
+
+Now it is possible to time the different approaches to the matrix-vector
+product.
+
+```{r timeax1, echo=TRUE}
+dyn.load("moler.so")
+cat("Is the mat multiply loaded? ",is.loaded("moler"),"\n")
+require(microbenchmark)
+nmax<-10
+ptable<-matrix(NA, nrow=nmax, ncol=6) # to hold results
+# loop over sizes
+for (ni in 1:nmax){
+  n<-50*ni
+  x<-runif(n) # generate a vector 
+  ptable[[ni, 1]]<-n
+  AA<-molermat(n)
+  tax<-system.time(oax<-replicate(100,ax(x, AA))[,1])[[1]]
+  taxx<-system.time(oaxx<-replicate(100,axx(x, AA))[,1])[[1]]
+  if (! identical(oax, oaxx)) stop("oaxx NOT correct")
+  taxftn<-system.time(oaxftn<-replicate(100,axftn(x, AA=1))[,1])[[1]]
+  if (! identical(oax, oaxftn)) stop("oaxftn NOT correct")
+  taximp<-system.time(oaximp<-replicate(100,aximp(x, AA=1))[,1])[[1]]
+  if (! identical(oax, oaximp)) stop("oaximp NOT correct")
+  taxmfi<-system.time(oaxmfi<-replicate(100,axmolerfast(x, AA=1))[,1])[[1]]
+  if (! identical(oax, oaxmfi)) stop("oaxmfi NOT correct")
+  ptable[[ni, 2]]<-tax
+  ptable[[ni, 3]]<-taxx
+  ptable[[ni, 4]]<-taxftn
+  ptable[[ni, 5]]<-taximp
+  ptable[[ni, 6]]<-taxmfi
+}
+
+axtym<-data.frame(n=ptable[,1], ax=ptable[,2], axx=ptable[,3],  axftn=ptable[,4], 
+                  aximp=ptable[,5], axmfast=ptable[,6])
+print(axtym)
+```
+
+
+From the above output, we see that the `crossprod` variant of the 
+matrix-vector product appears to be the fastest. However, we have omitted
+the time to build the matrix. If we must build the matrix, then we need 
+somehow to include that time. Because the times for the matrix-vector 
+product were so short, we used `replicate} above to run 100 copies 
+of the same calculation, which may give some distortion of the timings.
+However, we believe the scale of the times is more or less correct. To 
+compare these times to the times for the Fortran or implicit matrix-vector
+routines, we should add a multiple of the relevant interpreted or
+compiled build times. Here we have used the times for the rather poor
+`molermat()} function, but this is simply to illustrate the range
+of potential timings. Apportioning such "fixed costs" to timings is
+never a trivial decision. Similarly if, where and how to store
+large matrices if we do build them, and whether it is worth building
+them more than once if storage is an issue, are all questions that 
+may need to be addressed if performance becomes important.
+
+```{r adjaxtime, echo=TRUE}
+adjtym<-data.frame(n=axtym$n, axx1=axtym$axx+1*bmattym$buildi, 
+     axxz=axtym$axx+100*bmattym$buildi, 
+     axftn=axtym$axftn, aximp=axtym$aximp)
+print(adjtym)
+```
+
+Out of all this, we see that the Fortran implicit matrix-vector product is 
+the overall winner at all values of `n`. Moreover, it does NOT 
+require the creation and storage of the matrix. However, using Fortran
+does involve rather more work for the user, and for most applications 
+it is likely we could live with the use of either 
+
+- the interpreted matrix-product based on `crossprod`
+and an actual matrix is good enough, especially if a fast 
+matrix build is used and we have plenty of memory, or
+- the interpreted or byte-code compiled implicit matrix-vector 
+multiply `axmolerfast`.
+
+## RQ computation times}
+
+We have in Ref{sect:crq} set up three versions of a Rayleigh 
+Quotient calculation in addition to the direct form. The third 
+form is set up to use the \code{axftn} routine that we have 
+already shown is efficient. We could also use this with the
+implicit matrix-vector product \code{axmolerfast}.
+
+It seems overkill to show the RQ computation time for all versions
+and matrices, so we will do the timing simply for a matrix of 
+order 500.
+
+```{r rqtime1, echo=TRUE}
+dyn.load("moler.so")
+  n<-500
+  x<-runif(n) # generate a vector 
+  AA<-molermat(n)
+  tdi<-microbenchmark(rdi<-rqdir(x, AA))$time
+  cat("Direct algorithm: ",mean(tdi)*0.001,"\n")
+  t1i<-microbenchmark(r1i<-ray1(x, AA))$time
+  cat("ray1: mat-mult algorithm: ", mean(t1i)*0.001,"\n")
+  t2i<-microbenchmark(r2i<-ray2(x, AA))$time
+  cat("ray2: crossprod algorithm: ",mean(t2i)*0.001,"\n")
+  t3fi<-microbenchmark(r3i<-ray3(x, AA, ax=axftn))$time
+  cat("ray3: ax Fortran + crossprod: ",mean(t3fi)*0.001,"\n")
+  t3ri<-microbenchmark(r3i<-ray3(x, AA, ax=axmolerfast))$time
+  cat("ray3: ax fast R implicit + crossprod: ",mean(t3ri)*0.001,"\n")
+```
+
+Here we see that the use of the `crossprod` in `ray2` is 
+very fast, and this is interpreted code. Once again, we note that all 
+timings except those for `ray3` should have some adjustment for
+the building of the matrix. If storage is an issue, then `ray3`,
+which uses the implicit matrix-vector product in Fortran, is the 
+approach of choice. My own preference would be to use this option
+if the Fortran matrix-vector product subroutine is already available
+for the matrix required. I would not, however, generally choose to
+write the Fortran subroutine for a "new" problem matrix. The fast
+implicit matrix-vector tool with `ray3` is also useful and 
+quite fast if we need to minimize memory use.
+
+
+
+## Solution by spg
+
+To actually solve the eigensolution problem we will first use the 
+projected gradient method `spg` from `BB`. We repeat the 
+RQ function so that it is clear which routine we are using.
+
+```{r rayspg1, echo=TRUE}
+rqt<-function(x, AA){
+    rq<-as.numeric(crossprod(x, crossprod(AA,x)))
+}
+proj<-function(x) { sign(x[1])*x/sqrt(crossprod(x)) }
+require(BB)
+n<-100
+x<-rep(1,n)
+AA<-molermat(n)
+evs<-eigen(AA)
+tmin<-microbenchmark(amin<-spg(x, fn=rqt, project=proj, control=list(trace=FALSE), AA=AA), times=mbt)$time
+#amin
+tmax<-microbenchmark(amax<-spg(x, fn=rqt, project=proj, control=list(trace=FALSE), AA=-AA), times=mbt)$time
+#amax
+evalmax<-evs$values[1]
+evecmax<-evs$vectors[,1]
+evecmax<-sign(evecmax[1])*evecmax/sqrt(as.numeric(crossprod(evecmax)))
+emax<-list(evalmax=evalmax, evecmac=evecmax)
+save(emax, file="temax.Rdata")
+evalmin<-evs$values[n]
+evecmin<-evs$vectors[,n]
+evecmin<-sign(evecmin[1])*evecmin/sqrt(as.numeric(crossprod(evecmin)))
+avecmax<-amax$par
+avecmin<-amin$par
+avecmax<-sign(avecmax[1])*avecmax/sqrt(as.numeric(crossprod(avecmax)))
+avecmin<-sign(avecmin[1])*avecmin/sqrt(as.numeric(crossprod(avecmin)))
+cat("minimal eigensolution: Value=",amin$value,"in time ",tmin,"\n")
+cat("Eigenvalue - result from eigen=",amin$value-evalmin,"  vector max(abs(diff))=",
+      max(abs(avecmin-evecmin)),"\n\n")
+#print(amin$par)
+cat("maximal eigensolution: Value=",-amax$value,"in time ",tmax,"\n")
+cat("Eigenvalue - result from eigen=",-amax$value-evalmax,"  vector max(abs(diff))=",
+      max(abs(avecmax-evecmax)),"\n\n")
+#print(amax$par)
+```
+
+```{r runspg2, echo=FALSE}
+require(compiler)
+require(BB)
+nmax<-10
+stable<-matrix(NA, nrow=nmax, ncol=3) # to hold results
+
+# loop over sizes
+for (ni in 1:nmax){
+  n<-50*ni
+  x<-runif(n) # generate a vector 
+  AA<-molermat(n) # make sure defined
+  stable[[ni, 1]]<-n
+  tbld<-microbenchmark(AA<-molerfast(n), times=mbt)
+  tspg<-microbenchmark(aspg<-spg(x, fn=rqt, project=proj, control=list(trace=FALSE), AA=-AA), times=mbt)
+  stable[[ni, 2]]<-mean(tspg$time)
+  stable[[ni, 3]]<-mean(tbld$time)
+#  cat(n,tspg, tspgc,tbld,"\n")
+# times too short
+}
+spgtym<-data.frame(n=stable[,1], spgrqt=stable[,2], tbld=stable[,3])
+print(spgtym)
+```
+
+
+## Solution by other optimizers}
+
+We can try other optimizers, but we must note that unlike \code{spg} they 
+do not take account of the scaling. However, we can build in a transformation, 
+since our function is always the same for all sets of parameters scaled by the
+square root of the parameter inner product. The function \code{nobj} forms the
+quadratic form that is the numerator of the Rayleigh Quotient using the more 
+efficient \code{crossprod()} function
+
+\code{    rq<- as.numeric(crossprod(y, crossprod(AA,y))) }
+
+but we first form
+
+\code{    y<-x/sqrt(as.numeric(crossprod(x))) }
+
+to scale the parameters. 
+
+Since we are running a number of gradient-based optimizers in the wrapper
+\code{optimx}, we have reduced the matrix sizes and numbers.
+
+
+```{r runopx1, echo=TRUE}
+require(optimx)
+nobj<-function(x, AA=-AA){
+   y<-x/sqrt(as.numeric(crossprod(x)))
+   rq<- as.numeric(crossprod(y, crossprod(AA,y)))
+}
+
+ngrobj<-function(x, AA=-AA){
+   y<-x/sqrt(as.numeric(crossprod(x))) 
+   n<-length(x)
+   dd<-sqrt(as.numeric(crossprod(x)))
+   T1<-diag(rep(1,n))/dd
+   T2<- x%o%x/(dd*dd*dd)
+   gt<-T1-T2
+   gy<- as.vector(2.*crossprod(AA,y))
+   gg<-as.numeric(crossprod(gy, gt))
+} 
+require(optplus)
+# mset<-c("L-BFGS-B", "BFGS", "CG", "spg", "ucminf", "nlm", "nlminb", "Rvmmin", "Rcgmin")
+mset<-c("L-BFGS-B", "BFGS", "CG", "spg", "ucminf", "nlm", "nlminb", "Rvmmin", "Rcgmin")
+nmax<-5
+for (ni in 1:nmax){
+  n<-20*ni
+  x<-runif(n) # generate a vector 
+  AA<-molerfast(n) # make sure defined
+  aall<-optimx(x, fn=nobj, gr=ngrobj, method=mset, AA=-AA, 
+     control=list(starttests=FALSE, dowarn=FALSE))
+  optansout(aall, NULL)
+  cat("Above for n=",n," \n")
+}
+```
+
+The timings for these matrices of order 20 to 100 are likely too short to be very
+reliable in detail, but do show that the RQ problem using the scaling transformation
+and with an analytic gradient can be solved very quickly, especially by the limited
+memory methods such as L-BFGS-B and Rcgmin. Below we use the latter (in its 
+unconstrained implementation) to show the times over different matrix sizes.
+
+<<rcgrun1, echo=TRUE, cache=TRUE>>=
+ctable<-matrix(NA, nrow=10, ncol=2)
+nmax<-10
+for (ni in 1:nmax){
+  n<-50*ni
+  x<-runif(n) # generate a vector 
+  AA<-molerfast(n) # make sure defined
+  tcgu<-microbenchmark(arcgu<-Rcgminu(x, fn=nobj, gr=ngrobj, AA=-AA), times=mbt)
+  ctable[[ni,1]]<-n
+  ctable[[ni,2]]<-tcgu
+}
+cgtime<-data.frame(n=ctable[,1], tRcgminu=ctable[,2])
+print(cgtime)
+```
+
+## A specialized minimizer - Geradin's method}
+
+For comparison, let us try the Geradin routine (Appendix 1) as implemented in R by one of 
+us (JN). 
+
+```{r geradincode, echo=FALSE}
+ax<-function(x, AA){
+   u<-as.numeric(AA%*%x)
+}
+
+bx<-function(x, BB){
+   v<-as.numeric(BB%*%x)
+}
+
+geradin<-function(x, ax, bx, AA, BB, control=list(trace=TRUE, maxit=1000)){
+# Geradin minimize Rayleigh Quotient, Nash CMN Alg 25
+#  print(control)
+  trace<-control$trace
+  n<-length(x)
+  tol<-n*n*.Machine$double.eps^2
+  offset<-1e+5 # equality check offset
+  if (trace) cat("geradin.R, using tol=",tol,"\n")
+  ipr<-0 # counter for matrix mults
+  pa<-.Machine$double.xmax
+  R<-pa
+  msg<-"no msg"
+# step 1 -- main loop
+  keepgoing<-TRUE
+  while (keepgoing) {
+    avec<-ax(x, AA); bvec<-bx(x, BB); ipr<-ipr+1
+    xax<-as.numeric(crossprod(x, avec));  
+    xbx<-as.numeric(crossprod(x, bvec));
+    if (xbx <= tol) {
+       keepgoing<-FALSE # not really needed
+       msg<-"avoid division by 0 as xbx too small"
+       break
+    } 
+    p0<-xax/xbx
+    if (p0>pa) {
+       keepgoing<-FALSE # not really needed
+       msg<-"Rayleigh Quotient increased in step"
+       break
+    } 
+    pa<-p0
+    g<-2*(avec-p0*bvec)/xbx
+    gg<-as.numeric(crossprod(g)) # step 6
+    if (trace) cat("Before loop: RQ=",p0," after ",ipr," products, gg=",gg,"\n")
+    if (gg<tol) { # step 7
+       keepgoing<-FALSE # not really needed
+       msg<-"Small gradient -- done"
+       break
+    } 
+    t<- -g # step 8
+    for (itn in 1:n) { # major loop step 9
+       y<-ax(t, AA); z<-bx(t, BB); ipr<-ipr+1 # step 10
+       tat<-as.numeric(crossprod(t, y)) # step 11
+       xat<-as.numeric(crossprod(x, y)) 
+       xbt<-as.numeric(crossprod(x, z)) 
+       tbt<-as.numeric(crossprod(t, z)) 
+       u<-tat*xbt-xat*tbt
+       v<-tat*xbx-xax*tbt
+       w<-xat*xbx-xax*xbt
+       d<-v*v-4*u*w
+       if (d<0) stop("Geradin: imaginary roots not possible") # step 13
+       d<-sqrt(d) # step 14
+       if (v>0) k<--2*w/(v+d) else k<-0.5*(d-v)/u
+       xlast<-x # NOT as in CNM -- can be avoided with loop
+       avec<-avec+k*y; bvec<-bvec+k*z # step 15, update
+       x<-x+k*t
+       xax<-xax+as.numeric(crossprod(x,avec))      
+       xbx<-xbx+as.numeric(crossprod(x,bvec))      
+       if (xbx<tol) stop("Geradin: xbx has become too small")
+       chcount<-n - length(which((xlast+offset)==(x+offset)))
+       if (trace) cat("Number of changed components = ",chcount,"\n")
+       pn<-xax/xbx # step 17 different order
+       if (chcount==0) {
+         keepgoing<-FALSE # not really needed
+         msg<-"Unchanged parameters -- done"
+         break
+       }
+       if (pn >= p0) {
+         if (trace) cat("RQ not reduced, restart\n")
+         break # out of itn loop, not while loop (TEST!)
+       }
+       p0<-pn # step 19
+       g<-2*(avec-pn*bvec)/xbx
+       gg<-as.numeric(crossprod(g))
+       if (trace) cat("Itn", itn," RQ=",p0," after ",ipr," products, gg=",gg,"\n")
+       if (gg<tol){ # step 20
+         if (trace) cat("Small gradient in iteration, restart\n")
+         break # out of itn loop, not while loop (TEST!)
+       }
+       xbt<-as.numeric(crossprod(x,z)) # step 21
+       w<-y-pn*z # step 22
+       tabt<-as.numeric(crossprod(t,w))
+       beta<-as.numeric(crossprod(g,(w-xbt*g)))
+       beta<-beta/tabt # step 23
+       t<-beta*t-g
+    } # end loop on itn -- step 24
+  } # end main loop -- step 25
+# step 26
+  ans<-list(x=x, RQ=p0, ipr=ipr, msg=msg)
+}
+```
+
+```{r rungeradin1, echo=TRUE}
+cat("Test geradin with explicit matrix multiplication\n")
+n<-10
+AA<-molermat(n)
+BB=diag(rep(1,n))
+x<-runif(n)
+tg<-microbenchmark(ag<-geradin(x, ax, bx, AA=AA, BB=BB, 
+   control=list(trace=FALSE)), times=mbt)
+cat("Minimal eigensolution\n")
+print(ag)
+cat("Geradin time=",mean(tg$time),"\n")
+tgn<-microbenchmark(agn<-geradin(x, ax, bx, AA=-AA, BB=BB,
+   control=list(trace=FALSE)), times=mbt)
+cat("Maximal eigensolution (negative matrix)\n")
+print(agn)
+cat("Geradin time=",mean(tgn$time),"\n")
+```
+
+Let us time this routine with different matrix vector approaches.
+
+```{r timeger1, echo=TRUE}
+naximp<-function(x, A=1){ # implicit moler A*x
+   n<-length(x)
+   y<-rep(0,n)
+   for (i in 1:n){
+      tt<-0.
+      for (j in 1:n) {
+          if (i == j) tt<-tt+i*x[i]
+          else tt<-tt+(min(i,j) - 2)*x[j]
+      }
+      y[i]<- -tt # include negative sign
+   }
+   y
+}
+
+dyn.load("moler.so")
+cat("Is the mat multiply loaded? ",is.loaded("moler"),"\n")
+
+naxftn<-function(x, A) { # ignore second argument
+   n<-length(x) # could speed up by having this passed
+   vout<-rep(0,n) # purely for storage
+   res<-(-1)*(.Fortran("moler", n=as.integer(n), x=as.double(x), vout=as.double(vout)))$vout
+}
+
+
+require(microbenchmark)
+nmax<-10
+gtable<-matrix(NA, nrow=nmax, ncol=6) # to hold results
+# loop over sizes
+for (ni in 1:nmax){
+  n<-50*ni
+  x<-runif(n) # generate a vector 
+  gtable[[ni, 1]]<-n
+  AA<-molermat(n)
+  BB<-diag(rep(1,n))
+  tgax<-microbenchmark(ogax<-geradin(x, ax, bx, AA=-AA, BB=BB, control=list(trace=FALSE)), times=mbt)
+  gtable[[ni, 2]]<-mean(tgax$time)
+  tgaximp<-microbenchmark(ogaximp<-geradin(x, naximp, ident, AA=1, BB=1, control=list(trace=FALSE)), times=mbt)
+  gtable[[ni, 3]]<-mean(tgaximp$time)
+  tgaxftn<-microbenchmark(ogaxftn<-geradin(x, naxftn, ident, AA=1, BB=1, control=list(trace=FALSE)), times=mbt)
+  gtable[[ni, 4]]<-mean(tgaxftn$time)
+}
+
+gtym<-data.frame(n=gtable[,1], ax=gtable[,2], aximp=gtable[,3], axftn=gtable[,4])
+print(gtym)
+```
+
+Let us check that the solution for `n = 100` by Geradin is consistent
+with the answer via `eigen()`.
+
+```{r gercheck1, echo=TRUE}
+n<-100
+x<-runif(n)
+emax<-load("temax.Rdata")
+evalmax<-emax$evalmax
+evecmac<-emax$evecmax
+ogaxftn<-geradin(x, naxftn, ident, AA=1, BB=1, control=list(trace=FALSE))
+gvec<-ogaxftn$x
+gval<- -ogaxftn$RQ
+gvec<-sign(gvec[[1]])*gvec/sqrt(as.numeric(crossprod(gvec)))
+diff<-gvec-evecmax
+cat("Geradin diff eigenval from eigen result: ",gval-evalmax,"   max(abs(vector diff))=",
+      max(abs(diff)), "\n")
+```
+
+## Perspective}
+
+We can compare the different approaches by looking at the ratio of the best
+solution time for each method (compiled or interpreted, with best choice of
+function) to the time for the Geradin approach for the different matrix sizes. 
+In this we will ignore the fact that some approaches do not build the matrix.
+
+```{r persp1, echo=FALSE}
+cf<-data.frame(
+    n=bmattym$n,
+    eig=bmattym$eigentime,
+    spg=spgtym$spgcrqtcaxc,
+    rcg=cgtime$tRcgminu,
+    ger=gtym$axftnc
+)
+eigen<-cf$eig/cf$ger
+spg<-cf$spg/cf$ger
+rcgmin<-cf$rcg/cf$ger
+nsize<-cf$n
+jn<-data.frame(nsize=nsize, eigen=eigen, spg=spg, rcgmin=rcgmin)
+joe<-write.csv(jn, file="jndata.csv")
+plot(nsize,spg, pch=1, xlab="n", ylab="time ratio")
+points(nsize, rcgmin, pch=3)
+points(nsize, eigen, pch=4)
+title("Ratio of eigensolution times to Geradin routine by matrix size")
+points(nsize, rep(1,10), type="l")
+#legend(50,70,c("spg", "rcgmin","eigen"), pch = c(1,3,4), lty = c(1,2,3))
+legend(50,70,c("spg", "rcgmin","eigen"), pch = c(1,3,4))
+```
+
+
+To check the value of the Geradin approach, let us use a much larger problem,
+with `n=2000`. 
+
+```{r n2000a, echo=FALSE}
+dyn.load("moler.so")
+n<-2000
+t2000b<-microbenchmark(AA<-molerfast(n), times=mbt)
+t2000e<-microbenchmark(evs<-eigen(AA), times=mbt)
+x<-runif(n)
+t2000c<-microbenchmark(ac<-Rcgminu(x, fn=nobj, gr=ngrobj, AA=-AA), times=mbt)
+t2000g<-microbenchmark(ag<-geradin(x, naxftnc, ident, AA=1, BB=1, control=list(trace=FALSE)), times=mbt)
+cat("Times in seconds\n")
+cat("Build =",t2000b," eigen():",t2000e,"  Rcgminu:", t2000c," Geradin:",t2000g,"\n")
+cat("Ratios: build=", t2000b/t2000g, "eigen=",t2000e/t2000g,"  Rcgminu=",t2000c/t2000g,"\n")
+```
+
+
+## Conclusions}
+
+The Rayleigh Quotient minimization approach to eigensolutions has an 
+intuitive appeal and seemingly offers an interesting optimization 
+test problem, especially if we can make it computationally efficient.
+To improve time efficiency, we can apply the R byte code compiler, 
+use a Fortran (or other compiled language) subroutine, and choose
+how we set up our objective functions and gradients. To improve
+memory use, we can consider using a matrix implicitly.
+
+From the tests in this vignette, here is what we may say about these
+attempts, which we caution are based on a relatively small sample of
+tests:
+
+
+- The R byte code compiler offers a useful gain in speed when 
+our code has statements that access array elements rather than uses
+them in vectorized form.}
+- The \code{crossprod()} function is very efficient.
+- Fortran is not very difficult to use for small subroutines
+that compute a function such as the implicit matrix-vector product, 
+and it allows efficient computations for such operations.
+- The \code{eigen()} routine is a highly effective tool for
+computing all eigensolutions, even of a large matrix. It is only
+worth computing a single solution when the matrix is very large,
+in which case a specialized method such as that of Geradin makes
+sense and offers significant savings, especially when combined with
+the Fortran implicit matrix-product routine.
+
+
+## Acknowledgements
+
+This vignette originated due to a problem suggested by Gabor Grothendieck. Ravi Varadhan
+has provided inciteful comments and some vectorized functions which
+greatly altered some of the observations.
+
+
+## Appendix 1: Geradin routine
+
+```{r geradincodea, echo=TRUE}
+ax<-function(x, AA){
+   u<-as.numeric(AA%*%x)
+}
+bx<-function(x, BB){
+   v<-as.numeric(BB%*%x)
+}
+geradin<-function(x, ax, bx, AA, BB, control=list(trace=TRUE, maxit=1000)){
+# Geradin minimize Rayleigh Quotient, Nash CMN Alg 25
+# print(control)
+  trace<-control$trace
+  n<-length(x)
+  tol<-n*n*.Machine$double.eps^2
+  offset<-1e+5 # equality check offset
+  if (trace) cat("geradin.R, using tol=",tol,"\n")
+  ipr<-0 # counter for matrix mults
+  pa<-.Machine$double.xmax
+  R<-pa
+  msg<-"no msg"
+# step 1 -- main loop
+  keepgoing<-TRUE
+  while (keepgoing) {
+    avec<-ax(x, AA); bvec<-bx(x, BB); ipr<-ipr+1
+    xax<-as.numeric(crossprod(x, avec));  
+    xbx<-as.numeric(crossprod(x, bvec));
+    if (xbx <= tol) {
+       keepgoing<-FALSE # not really needed
+       msg<-"avoid division by 0 as xbx too small"
+       break
+    } 
+    p0<-xax/xbx
+    if (p0>pa) {
+       keepgoing<-FALSE # not really needed
+       msg<-"Rayleigh Quotient increased in step"
+       break
+    } 
+    pa<-p0
+    g<-2*(avec-p0*bvec)/xbx
+    gg<-as.numeric(crossprod(g)) # step 6
+    if (trace) cat("Before loop: RQ=",p0," after ",ipr," products, gg=",gg,"\n")
+    if (gg<tol) { # step 7
+       keepgoing<-FALSE # not really needed
+       msg<-"Small gradient -- done"
+       break
+    } 
+    t<- -g # step 8
+    for (itn in 1:n) { # major loop step 9
+       y<-ax(t, AA); z<-bx(t, BB); ipr<-ipr+1 # step 10
+       tat<-as.numeric(crossprod(t, y)) # step 11
+       xat<-as.numeric(crossprod(x, y)) 
+       xbt<-as.numeric(crossprod(x, z)) 
+       tbt<-as.numeric(crossprod(t, z)) 
+       u<-tat*xbt-xat*tbt
+       v<-tat*xbx-xax*tbt
+       w<-xat*xbx-xax*xbt
+       d<-v*v-4*u*w
+       if (d<0) stop("Geradin: imaginary roots not possible") # step 13
+       d<-sqrt(d) # step 14
+       if (v>0) k<--2*w/(v+d) else k<-0.5*(d-v)/u
+       xlast<-x # NOT as in CNM -- can be avoided with loop
+       avec<-avec+k*y; bvec<-bvec+k*z # step 15, update
+       x<-x+k*t
+       xax<-xax+as.numeric(crossprod(x,avec))      
+       xbx<-xbx+as.numeric(crossprod(x,bvec))      
+       if (xbx<tol) stop("Geradin: xbx has become too small")
+       chcount<-n - length(which((xlast+offset)==(x+offset)))
+       if (trace) cat("Number of changed components = ",chcount,"\n")
+       pn<-xax/xbx # step 17 different order
+       if (chcount==0) {
+         keepgoing<-FALSE # not really needed
+         msg<-"Unchanged parameters -- done"
+         break
+       }
+       if (pn >= p0) {
+         if (trace) cat("RQ not reduced, restart\n")
+         break # out of itn loop, not while loop (TEST!)
+       }
+       p0<-pn # step 19
+       g<-2*(avec-pn*bvec)/xbx
+       gg<-as.numeric(crossprod(g))
+       if (trace) cat("Itn", itn," RQ=",p0," after ",ipr," products, gg=",gg,"\n")
+       if (gg<tol){ # step 20
+         if (trace) cat("Small gradient in iteration, restart\n")
+         break # out of itn loop, not while loop (TEST!)
+       }
+       xbt<-as.numeric(crossprod(x,z)) # step 21
+       w<-y-pn*z # step 22
+       tabt<-as.numeric(crossprod(t,w))
+       beta<-as.numeric(crossprod(g,(w-xbt*g)))
+       beta<-beta/tabt # step 23
+       t<-beta*t-g
+    } # end loop on itn -- step 24
+  } # end main loop -- step 25
+  ans<-list(x=x, RQ=p0, ipr=ipr, msg=msg) # step 26
+}
+```
+
+
+## References
