@@ -30,7 +30,7 @@ urlcolor: blue
 ---
 
 ```{r setup, echo=FALSE}
-mbt<-2 # default to 10 repetitions in microbenchmark
+mbt<-2 # default to 2 repetitions in microbenchmark while sorting out text
 ```
 
 ```{r optansout, echo=FALSE}
@@ -433,14 +433,14 @@ for (ni in 1:nmax){
   x<-runif(n) # generate a vector 
   ptable[[ni, 1]]<-n
   AA<-molermat(n)
-  tax<-system.time(oax<-replicate(100,ax(x, AA))[,1])[[1]]
-  taxx<-system.time(oaxx<-replicate(100,axx(x, AA))[,1])[[1]]
+  tax<- mean(microbenchmark(oax<-ax(x, AA), times=mbt)$time)*0.001
+  taxx<-mean(microbenchmark(oaxx<-axx(x, AA), times=mbt)$time)*0.001
   if (! identical(oax, oaxx)) stop("oaxx NOT correct")
-  taxftn<-system.time(oaxftn<-replicate(100,axftn(x, AA=1))[,1])[[1]]
+  taxftn<-mean(microbenchmark(oaxftn<-axftn(x, AA=1), times=mbt)$time)*0.001
   if (! identical(oax, oaxftn)) stop("oaxftn NOT correct")
-  taximp<-system.time(oaximp<-replicate(100,aximp(x, AA=1))[,1])[[1]]
+  taximp<-mean(microbenchmark(oaximp<-aximp(x, AA=1), times=mbt)$time)*0.001
   if (! identical(oax, oaximp)) stop("oaximp NOT correct")
-  taxmfi<-system.time(oaxmfi<-replicate(100,axmolerfast(x, AA=1))[,1])[[1]]
+  taxmfi<-mean(microbenchmark(oaxmfi<-axmolerfast(x, AA=1), times=mbt)$time)*0.001
   if (! identical(oax, oaxmfi)) stop("oaxmfi NOT correct")
   ptable[[ni, 2]]<-tax
   ptable[[ni, 3]]<-taxx
@@ -452,6 +452,16 @@ for (ni in 1:nmax){
 axtym<-data.frame(n=ptable[,1], ax=ptable[,2], axx=ptable[,3],  axftn=ptable[,4], 
                   aximp=ptable[,5], axmfast=ptable[,6])
 print(axtym)
+```
+
+```{r extabl1, echo=FALSE}
+# explain table
+expln <- c("ax = R matrix * vector  A %*% x",
+   "axx = R crossprod A, x",
+   "axftn = Fortran version of implicit Moler A * x",
+   "aximp = implicit moler A*x in R",
+   "axmfast = A fast and memory-saving version of A %*% x")
+for (exx in expln) { cat(exx,"\n")}
 ```
 
 

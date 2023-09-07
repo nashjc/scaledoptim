@@ -7,6 +7,9 @@ author:
 - Ravi Varadhan, Johns Hopkins University Medical School
 date: "2023-7-31"
 output:
+  # rjtools::rjournal_web_article:
+  #     self_contained: yes
+  #     toc: no
   pdf_document:
     keep_tex: no
     toc: no
