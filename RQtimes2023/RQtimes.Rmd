@@ -460,7 +460,8 @@ expln <- c("ax = R matrix * vector  A %*% x",
    "axx = R crossprod A, x",
    "axftn = Fortran version of implicit Moler A * x",
    "aximp = implicit moler A*x in R",
-   "axmfast = A fast and memory-saving version of A %*% x")
+   "axmfast = A fast and memory-saving version of A %*% x",
+   "Times in milliseconds from microbenchmark")
 for (exx in expln) { cat(exx,"\n")}
 ```
 
@@ -468,23 +469,16 @@ for (exx in expln) { cat(exx,"\n")}
 From the above output, we see that the `crossprod` variant of the 
 matrix-vector product appears to be the fastest. However, we have omitted
 the time to build the matrix. If we must build the matrix, then we need 
-somehow to include that time. Because the times for the matrix-vector 
-product were so short, we used `replicate` above to run 100 copies 
-of the same calculation, which may give some distortion of the timings.
-However, we believe the scale of the times is more or less correct. To 
-compare these times to the times for the Fortran or implicit matrix-vector
-routines, we should add a multiple of the relevant interpreted or
-compiled build times. Here we have used the times for the rather poor
-`molermat()` function, but this is simply to illustrate the range
-of potential timings. Apportioning such "fixed costs" to timings is
+somehow to include that time.  Apportioning "fixed costs" to timings is
 never a trivial decision. Similarly if, where and how to store
 large matrices if we do build them, and whether it is worth building
 them more than once if storage is an issue, are all questions that 
 may need to be addressed if performance becomes important.
 
-```{r adjaxtime, echo=TRUE}
-adjtym<-data.frame(n=axtym$n, axx1=axtym$axx+1*bmattym$buildi, 
-     axxz=axtym$axx+100*bmattym$buildi, 
+```{r adjaxtime, echo=FALSE}
+cat("Times (in millisecs) adjusted for matrix build\n")
+adjtym<-data.frame(n=axtym$n, axbld=axtym$ax+bmattym$buildi, 
+     axxbld=axtym$axx+bmattym$buildi, 
      axftn=axtym$axftn, aximp=axtym$aximp)
 print(adjtym)
 ```
@@ -513,7 +507,7 @@ It seems overkill to show the RQ computation time for all versions
 and matrices, so we will do the timing simply for a matrix of 
 order 500.
 
-```{r rqtime1, echo=TRUE}
+```{r rqtime1, echo=FALSE}
 dyn.load("moler.so")
   n<-500
   x<-runif(n) # generate a vector 
@@ -530,7 +524,8 @@ dyn.load("moler.so")
   cat("ray3: ax fast R implicit + crossprod: ",mean(t3ri)*0.001,"\n")
 ```
 
-Here we see that the use of the `crossprod` in `ray2` is 
+Here we see that the use of either the matrix multiplication in `ray1` or
+of crossprod` in `ray2` is 
 very fast, and this is interpreted code. Once again, we note that all 
 timings except those for `ray3` should have some adjustment for
 the building of the matrix. If storage is an issue, then `ray3`,
@@ -554,15 +549,18 @@ RQ function so that it is clear which routine we are using.
 rqt<-function(x, AA){
     rq<-as.numeric(crossprod(x, crossprod(AA,x)))
 }
-proj<-function(x) { sign(x[1])*x/sqrt(crossprod(x)) }
+proj <- function(x) {sign(x[1]) * x/sqrt(c(crossprod(x))) } # from ravi
+# Note that the c() is needed in denominator to avoid error msgs
 require(BB)
 n<-100
 x<-rep(1,n)
 AA<-molermat(n)
 evs<-eigen(AA)
-tmin<-microbenchmark(amin<-spg(x, fn=rqt, project=proj, control=list(trace=FALSE), AA=AA), times=mbt)$time
+tmin<-microbenchmark(amin<-spg(x, fn=rqt, project=proj, 
+            control=list(trace=FALSE), AA=AA), times=mbt)$time
 #amin
-tmax<-microbenchmark(amax<-spg(x, fn=rqt, project=proj, control=list(trace=FALSE), AA=-AA), times=mbt)$time
+tmax<-microbenchmark(amax<-spg(x, fn=rqt, project=proj, 
+            control=list(trace=FALSE), AA=-AA), times=mbt)$time
 #amax
 evalmax<-evs$values[1]
 evecmax<-evs$vectors[,1]
@@ -599,9 +597,12 @@ for (ni in 1:nmax){
   AA<-molermat(n) # make sure defined
   stable[[ni, 1]]<-n
   tbld<-microbenchmark(AA<-molerfast(n), times=mbt)
-  tspg<-microbenchmark(aspg<-spg(x, fn=rqt, project=proj, control=list(trace=FALSE), AA=-AA), times=mbt)
+  tspg<-microbenchmark(aspg<-spg(x, fn=rqt, project=proj, 
+              control=list(trace=FALSE), AA=-AA), times=mbt)
+  teig<-microbenchmark(aseig<-eigen(AA), times=mbt)
   stable[[ni, 2]]<-mean(tspg$time)*0.001
   stable[[ni, 3]]<-mean(tbld$time)*0.001
+  stable[[ni, 3]]<-mean(aseig$time)*0.001
 }
 spgtym<-data.frame(n=stable[,1], spgrqt=stable[,2], tbld=stable[,3])
 print(round(spgtym,0))
