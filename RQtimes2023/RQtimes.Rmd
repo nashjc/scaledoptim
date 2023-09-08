@@ -7,7 +7,8 @@ abstract:
   and different ways of running the computations, in particular trying Fortran
   subroutines and the R byte compiler. It has been updated from a 2012
   document to reflect changes in R and its packages that make it awkward to
-  reprocess the original document on newer computers.
+  reprocess the original document on newer computers and which show that
+  timing profiles of R commands have changed in the interim.
 draft: true
 author:
     - name: John C. Nash
@@ -30,7 +31,7 @@ urlcolor: blue
 ---
 
 ```{r setup, echo=FALSE}
-mbt<-25 # default to 2 repetitions in microbenchmark while sorting out text
+mbt<-5 # default to 5 repetitions in microbenchmark while sorting out text
 msect<-function(times){
    round(mean(times)*0.001,0)
 }
