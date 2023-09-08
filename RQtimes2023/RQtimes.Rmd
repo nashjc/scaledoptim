@@ -562,7 +562,6 @@ stable<-matrix(NA, nrow=nmax, ncol=4) # to hold results
 # =========== works to here, but spg is slower than eigen
 # loop over sizes
 for (ni in 1:nmax){
-  ni<-1
   n<-50*ni
   x<-runif(n) # generate a vector 
   AA<-molerfast(n) # make sure defined
@@ -580,7 +579,7 @@ print(round(spgtym,0))
 ```
 
 
-## Solution by other optimizers}
+## Solution by other optimizers
 
 We can try other optimizers, but we must note that unlike `spg` they 
 do not take account of the scaling. However, we can build in a transformation, 
@@ -625,7 +624,7 @@ for (ni in 1:nmax){
   x<-runif(n) # generate a vector 
   AA<-molerfast(n) # make sure defined
   aall<-opm(x, fn=nobj, gr=ngrobj, method=mset, AA=-AA, 
-     control=list(starttests=FALSE, dowarn=FALSE))
+     control=list(trace=1,starttests=FALSE, dowarn=FALSE, kkt=FALSE))
   # optansout(aall, NULL)
   summary(aall, order=value, )
   cat("Above for n=",n," \n")
@@ -640,7 +639,7 @@ to show the times over different matrix sizes.
 
 ```{r rcgrun1, echo=TRUE,cache=TRUE}
 ctable<-matrix(NA, nrow=10, ncol=2)
-nmax<-10
+nmax<-5
 for (ni in 1:nmax){
   n<-50*ni
   x<-runif(n) # generate a vector 
@@ -850,6 +849,7 @@ function) to the time for the Geradin approach for the different matrix sizes.
 In this we will ignore the fact that some approaches do not build the matrix.
 
 ```{r persp1, echo=FALSE}
+library(optimx)
 cf<-data.frame(n=bmattym$n,
     eig=bmattym$eigentime,
     spg=spgtym$spgrqt,
