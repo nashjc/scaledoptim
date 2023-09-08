@@ -30,53 +30,14 @@ urlcolor: blue
 ---
 
 ```{r setup, echo=FALSE}
-mbt<-2 # default to 2 repetitions in microbenchmark while sorting out text
-```
-
-```{r optansout, echo=FALSE}
-# If needed, since it was 
-# optansout <- function(ansdf, filename) {
-#     ##### OPEN ISSUES: (any date order)
-#     
-#     ##### IMPLEMENTED: (reverse date order)
-#     
-#     # A funtion to display and print to file (if present) the
-#     #   output of optimx
-#     if (!is.null(filename)) {
-#         sink(filename)
-#     }
-#     # if (! exists(filename)) { sink(filename) } # may need to
-#     #   check paths
-#     tpar <- ansdf$par
-#     tdf <- ansdf
-#     ltvec <- length(tpar[[1]])
-#     for (i in 1:length(tpar)) {
-#         tvec <- tpar[[i]]
-#         ltvec <- length(tvec)
-#         if (ltvec > 5) {
-#             tvec <- tvec[1:5]
-#         }
-#         tpar[[i]] <- tvec
-#     }
-#     tdf$par <- tpar
-#     pardf <- tdf[1]
-#     if (ltvec > 5) {
-#         names(pardf)[1] <- "first.5.par"
-#     }
-#     else {
-#         names(pardf)[1] <- "par"
-#     }
-#     print(pardf)
-#     tdf$par <- NULL
-#     print(tdf)
-#     if (!is.null(filename)) {
-#         sink()
-#     }
-#     # if (! exists(filename)) { sink() } # to turn it off
-#     rm(tdf)
-#     rm(tpar)
-#     return(TRUE)
-# }
+mbt<-25 # default to 2 repetitions in microbenchmark while sorting out text
+msect<-function(times){
+   round(mean(times)*0.001,0)
+}
+msecr<-function(times){
+#   round((max(times)-min(times))*0.001,0)
+   round(sd(times)*0.001,0)
+}
 ```
 
 ## The computational task
@@ -175,34 +136,41 @@ default and NOT to give worthwhile improvements.
 We also include times for the `eigen()` function that computes
 the full set of eigensolutions very quickly.
 
-```{r molertime, echo=FALSE}
+```{r mnolertime, echo=FALSE}
 require(microbenchmark)
 nmax<-10
 mtable<-matrix(NA, nrow=nmax, ncol=5) # to hold results
+rtable<-mtable
 # loop over sizes
 for (ni in 1:nmax){
   n<-50*ni
   mtable[[ni, 1]]<-n
+  rtable[[ni, 1]]<-n
   # Note "unit" argument is ONLY for display. time is in nanoseconds
   ti<-microbenchmark(ai<-molermat(n), unit="us", times=mbt)$time
   tfi<-microbenchmark(afi<-molerfast(n), unit="us", times=mbt)$time
   if (! identical(ai, afi)) stop("Different outcomes == molermat, molerfast")
   osize<-object.size(ai)
   tevs<-microbenchmark(evs<-eigen(ai), unit="us", times=mbt)$time
-  mtable[[ni,2]]<-mean(ti)*0.001 # times in millisecs
+  mtable[[ni,2]]<-msect(ti) 
   mtable[[ni,3]]<-osize
-  mtable[[ni,4]]<-mean(tevs)*0.001
-  mtable[[ni,5]]<-mean(tfi)*0.001
-#  cat(n, ti, osize,"\n")
+  mtable[[ni,4]]<-msect(tevs)
+  mtable[[ni,5]]<-msect(tfi)
+  rtable[[ni,2]]<-msecr(ti) 
+  rtable[[ni,3]]<-osize
+  rtable[[ni,4]]<-msecr(tevs)
+  rtable[[ni,5]]<-msecr(tfi)
 }
 ```
 
 ```{r molertimedisp, echo=FALSE}
-bmattym<-data.frame(n=mtable[,1], buildi=mtable[,2],  
-     osize=mtable[,3], eigentime=mtable[,4], bfast=mtable[,5])
-print(round(bmattym,0))
-cat("buildi - interpreted build time\n")
-cat("osize - matrix size in bytes; eigentime - all eigensolutions time\n")
+bmattym<-data.frame(n=mtable[,1], osize=mtable[,3], buildi=mtable[,2],
+     buildir=rtable[,2], eigentime=mtable[,4], eigentimr=rtable[,4], 
+     bfast=mtable[,5], bfastr=rtable[,5])
+print(bmattym)
+cat("osize - matrix size in bytes\n")
+cat("eigentime - all eigensolutions time\n")
+cat("buildi - interpreted build time, range\n")
 cat("bfast - interpreted vectorized build time\n")
 cat("Times converted to milliseconds\n")
 ```
@@ -408,15 +376,6 @@ axftn<-function(x, AA=1) { # ignore second argument
 
 We can also byte compile each of the routines above
 
-<!-- <<cmpfns, echo=TRUE, cache=TRUE>>= -->
-<!-- require(compiler) -->
-<!-- axc<-cmpfun(ax) -->
-<!-- axxc<-cmpfun(axx) -->
-<!-- axftnc<-cmpfun(axftn) -->
-<!-- aximpc<-cmpfun(aximp) -->
-<!-- axmfc<-cmpfun(axmolerfast) -->
-<!-- @    ---  not useful as at 2023 -->
-
 
 Now it is possible to time the different approaches to the matrix-vector
 product.
@@ -426,31 +385,33 @@ dyn.load("moler.so")
 cat("Is the mat multiply loaded? ",is.loaded("moler"),"\n")
 require(microbenchmark)
 nmax<-10
-ptable<-matrix(NA, nrow=nmax, ncol=6) # to hold results
+ptable<-matrix(NA, nrow=nmax, ncol=11) # to hold results
 # loop over sizes
 for (ni in 1:nmax){
   n<-50*ni
   x<-runif(n) # generate a vector 
   ptable[[ni, 1]]<-n
   AA<-molermat(n)
-  tax<- mean(microbenchmark(oax<-ax(x, AA), times=mbt)$time)*0.001
-  taxx<-mean(microbenchmark(oaxx<-axx(x, AA), times=mbt)$time)*0.001
+  tax<- microbenchmark(oax<-ax(x, AA), times=mbt)$time
+  taxx<-microbenchmark(oaxx<-axx(x, AA), times=mbt)$time
   if (! identical(oax, oaxx)) stop("oaxx NOT correct")
-  taxftn<-mean(microbenchmark(oaxftn<-axftn(x, AA=1), times=mbt)$time)*0.001
+  taxftn<-microbenchmark(oaxftn<-axftn(x, AA=1), times=mbt)$time
   if (! identical(oax, oaxftn)) stop("oaxftn NOT correct")
-  taximp<-mean(microbenchmark(oaximp<-aximp(x, AA=1), times=mbt)$time)*0.001
+  taximp<-microbenchmark(oaximp<-aximp(x, AA=1), times=mbt)$time
   if (! identical(oax, oaximp)) stop("oaximp NOT correct")
-  taxmfi<-mean(microbenchmark(oaxmfi<-axmolerfast(x, AA=1), times=mbt)$time)*0.001
+  taxmfi<-microbenchmark(oaxmfi<-axmolerfast(x, AA=1), times=mbt)$time
   if (! identical(oax, oaxmfi)) stop("oaxmfi NOT correct")
-  ptable[[ni, 2]]<-tax
-  ptable[[ni, 3]]<-taxx
-  ptable[[ni, 4]]<-taxftn
-  ptable[[ni, 5]]<-taximp
-  ptable[[ni, 6]]<-taxmfi
+  ptable[[ni, 2]]<-msect(tax); ptable[[ni,3]]<-msecr(tax)
+  ptable[[ni, 4]]<-msect(taxx); ptable[[ni, 5]]<-msecr(taxx)
+  ptable[[ni, 6]]<-msect(taxftn); ptable[[ni, 7]]<-msecr(taxftn)
+  ptable[[ni, 8]]<-msect(taximp); ptable[[ni,9]]<-msecr(taximp)
+  ptable[[ni, 10]]<-msect(taxmfi); ptable[[ni,11]]<-msecr(taxmfi)
 }
 
-axtym<-data.frame(n=ptable[,1], ax=ptable[,2], axx=ptable[,3],  axftn=ptable[,4], 
-                  aximp=ptable[,5], axmfast=ptable[,6])
+axtym<-data.frame(n=ptable[,1], ax=ptable[,2], axr=ptable[,3],  axx=ptable[,4],
+                  axxr=ptable[,5],  axftn=ptable[,6], axftnr=ptable[,7], 
+                  aximp=ptable[,8], aximpr=ptable[,9], 
+                  axmfast=ptable[,10], axmfastr=ptable[,11])
 print(axtym)
 ```
 
@@ -546,25 +507,40 @@ projected gradient method `spg` from `BB`. We repeat the
 RQ function so that it is clear which routine we are using.
 
 ```{r rayspg1, echo=TRUE}
-rqt<-function(x, AA){
-    rq<-as.numeric(crossprod(x, crossprod(AA,x)))
+# spgRQ.R
+molerfast <- function(n) {
+  # A fast version of `molermat'
+  A <- matrix(0, nrow = n, ncol = n)
+  j <- 1:n
+  for (i in 1:n) {
+    A[i, 1:i] <- pmin(i, 1:i) - 2
+  }
+  A <- A + t(A)
+  diag(A) <- 1:n
+  A
 }
+
+rqfast<-function(x){
+  rq<-as.numeric(t(x) %*% axmolerfast(x))
+  rq
+}
+rqneg<-function(x) { -rqfast(x)}
 proj <- function(x) {sign(x[1]) * x/sqrt(c(crossprod(x))) } # from ravi
 # Note that the c() is needed in denominator to avoid error msgs
 require(BB)
 n<-100
 x<-rep(1,n)
-AA<-molermat(n)
-evs<-eigen(AA)
-tmin<-microbenchmark(amin<-spg(x, fn=rqt, project=proj, 
-            control=list(trace=FALSE), AA=AA), times=mbt)$time
-#amin
-tmax<-microbenchmark(amax<-spg(x, fn=rqt, project=proj, 
-            control=list(trace=FALSE), AA=-AA), times=mbt)$time
-#amax
+x<-x/as.numeric(sqrt(crossprod(x)))
+AA<-molerfast(n)
+teig<-microbenchmark(evs<-eigen(AA), times=mbt)$time
+cat("eigen time =", mean(teig)*0.001,"\n")
+tmin<-microbenchmark(amin<-spg(x, fn=rqfast, project=proj, 
+                               control=list(trace=TRUE)), times=mbt)$time
+tmax<-microbenchmark(amax<-spg(x, fn=rqneg, project=proj, 
+                               control=list(trace=FALSE)), times=mbt)$time
 evalmax<-evs$values[1]
 evecmax<-evs$vectors[,1]
-evecmax<-sign(evecmax[1])*evecmax/sqrt(as.numeric(crossprod(evecmax)))
+evecmax<-sign(evecmax[1])*evecmax/sqrt(as.numeric(crossprod(evecmax))) # normalize
 emax<-list(evalmax=evalmax, evecmax=evecmax)
 # save(emax, file="temax.Rdata")
 evalmin<-evs$values[n]
@@ -574,37 +550,33 @@ avecmax<-amax$par
 avecmin<-amin$par
 avecmax<-sign(avecmax[1])*avecmax/sqrt(as.numeric(crossprod(avecmax)))
 avecmin<-sign(avecmin[1])*avecmin/sqrt(as.numeric(crossprod(avecmin)))
-cat("minimal eigensolution: Value=",amin$value,"in time ",tmin,"\n")
+cat("minimal eigensolution: Value=",amin$value,"in time ",mean(tmin)*0.001,"\n")
 cat("Eigenvalue - result from eigen=",amin$value-evalmin,"  vector max(abs(diff))=",
-      max(abs(avecmin-evecmin)),"\n\n")
+    max(abs(avecmin-evecmin)),"\n\n")
 #print(amin$par)
-cat("maximal eigensolution: Value=",-amax$value,"in time ",tmax,"\n")
+cat("maximal eigensolution: Value=",-amax$value,"in time ",mean(tmax)*0.001,"\n")
 cat("Eigenvalue - result from eigen=",-amax$value-evalmax,"  vector max(abs(diff))=",
-      max(abs(avecmax-evecmax)),"\n\n")
-#print(amax$par)
-```
+    max(abs(avecmax-evecmax)),"\n\n")
 
-```{r runspg2, echo=FALSE}
-require(compiler)
-require(BB)
 nmax<-10
-stable<-matrix(NA, nrow=nmax, ncol=3) # to hold results
-
+stable<-matrix(NA, nrow=nmax, ncol=4) # to hold results
+# =========== works to here, but spg is slower than eigen
 # loop over sizes
 for (ni in 1:nmax){
+  ni<-1
   n<-50*ni
   x<-runif(n) # generate a vector 
-  AA<-molermat(n) # make sure defined
+  AA<-molerfast(n) # make sure defined
   stable[[ni, 1]]<-n
   tbld<-microbenchmark(AA<-molerfast(n), times=mbt)
-  tspg<-microbenchmark(aspg<-spg(x, fn=rqt, project=proj, 
-              control=list(trace=FALSE), AA=-AA), times=mbt)
+  tspg<-microbenchmark(aspg<-spg(x, fn=rqneg, project=proj, 
+                                 control=list(trace=FALSE)), times=mbt)
   teig<-microbenchmark(aseig<-eigen(AA), times=mbt)
   stable[[ni, 2]]<-mean(tspg$time)*0.001
   stable[[ni, 3]]<-mean(tbld$time)*0.001
-  stable[[ni, 3]]<-mean(aseig$time)*0.001
+  stable[[ni, 4]]<-mean(teig$time)*0.001
 }
-spgtym<-data.frame(n=stable[,1], spgrqt=stable[,2], tbld=stable[,3])
+spgtym<-data.frame(n=stable[,1], spgrqt=stable[,2], tbld=stable[,3], teig=stable[,4])
 print(round(spgtym,0))
 ```
 
@@ -875,7 +847,7 @@ cat("Geradin diff eigenval from eigen result: ",gval-evalmax,"   max(abs(vector 
       max(abs(diff)), "\n")
 ```
 
-## Perspective}
+## Perspective
 
 We can compare the different approaches by looking at the ratio of the best
 solution time for each method (compiled or interpreted, with best choice of
