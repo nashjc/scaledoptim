@@ -523,20 +523,22 @@ To actually solve the eigensolution problem we will first use the
 projected gradient method `spg` from `BB`. We repeat the 
 RQ function so that it is clear which routine we are using.
 
+<!-- molerfast <- function(n) { -->
+<!--   # A fast version of `molermat' -->
+<!--   A <- matrix(0, nrow = n, ncol = n) -->
+<!--   j <- 1:n -->
+<!--   for (i in 1:n) { -->
+<!--     A[i, 1:i] <- pmin(i, 1:i) - 2 -->
+<!--   } -->
+<!--   A <- A + t(A) -->
+<!--   diag(A) <- 1:n -->
+<!--   A -->
+<!-- } -->
+
+
+
 ```{r rayspg1, echo=TRUE, cache=TRUE}
 # spgRQ.R
-molerfast <- function(n) {
-  # A fast version of `molermat'
-  A <- matrix(0, nrow = n, ncol = n)
-  j <- 1:n
-  for (i in 1:n) {
-    A[i, 1:i] <- pmin(i, 1:i) - 2
-  }
-  A <- A + t(A)
-  diag(A) <- 1:n
-  A
-}
-
 rqfast<-function(x){
   rq<-as.numeric(t(x) %*% axmolerfast(x))
   rq
@@ -569,12 +571,12 @@ avecmax<-sign(avecmax[1])*avecmax/sqrt(as.numeric(crossprod(avecmax)))
 avecmin<-sign(avecmin[1])*avecmin/sqrt(as.numeric(crossprod(avecmin)))
 cat("minimal eigensolution: Value=",amin$value,"in time ",
       msect(tmin),"sd=",msecr(tmin),"\n")
-cat("Eigenvalue - result from eigen=",amin$value-evalmin,"  vector max(abs(diff))=",
+cat("(Eigenvalue - result from eigen)=",amin$value-evalmin,"  vector max(abs(diff))=",
     max(abs(avecmin-evecmin)),"\n")
 #print(amin$par)
 cat("maximal eigensolution: Value=",-amax$value,"in time ",
      msect(tmax),"sd=",msecr(tmax),"\n")
-cat("Eigenvalue - result from eigen=",-amax$value-evalmax,"  vector max(abs(diff))=",
+cat("(Eigenvalue - result from eigen)=",-amax$value-evalmax,"  vector max(abs(diff))=",
     max(abs(avecmax-evecmax)),"\n")
 ```
 
@@ -584,7 +586,7 @@ stable<-matrix(NA, nrow=nmax, ncol=4) # to hold results
 # =========== works to here, but spg is slower than eigen
 # loop over sizes
 for (ni in 1:nmax){
-  n<-50*ni
+  n<-100*ni
   x<-runif(n) # generate a vector 
   AA<-molerfast(n) # make sure defined
   stable[[ni, 1]]<-n

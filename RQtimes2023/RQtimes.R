@@ -41,6 +41,8 @@ require(microbenchmark)
 nmax<-5
 mtable<-matrix(NA, nrow=nmax, ncol=5) # to hold results
 rtable<-mtable
+evmax<-rep(NA,nmax)
+evmin<-rep(NA,nmax)
 # loop over sizes
 for (ni in 1:nmax){
   n<-100*ni
@@ -50,25 +52,27 @@ for (ni in 1:nmax){
   ti<-microbenchmark(ai<-molermat(n), unit="us", times=mbt)$time
   tfi<-microbenchmark(afi<-molerfast(n), unit="us", times=mbt)$time
   if (! identical(ai, afi)) stop("Different outcomes == molermat, molerfast")
-  matsize<-as.numeric(object.size(ai))
+  osize<-object.size(ai)
   tevs<-microbenchmark(evs<-eigen(ai), unit="us", times=mbt)$time
+  evmax[ni]<-evs$values[1]
+  evmin[ni]<-evs$values[n]
   mtable[[ni,2]]<-msect(ti) 
-  mtable[[ni,3]]<-matsize
+  mtable[[ni,3]]<-osize
   mtable[[ni,4]]<-msect(tevs)
   mtable[[ni,5]]<-msect(tfi)
   rtable[[ni,2]]<-msecr(ti) 
-  rtable[[ni,3]]<-matsize
+  rtable[[ni,3]]<-osize
   rtable[[ni,4]]<-msecr(tevs)
   rtable[[ni,5]]<-msecr(tfi)
 }
 
 
 ## ----molertimedisp, echo=FALSE-------------------------------------------------------------------------------------------------------------------
-bmattym<-data.frame(n=mtable[,1], matsize=mtable[,3], buildi=mtable[,2],
+bmattym<-data.frame(n=mtable[,1], osize=mtable[,3], buildi=mtable[,2],
      buildir=rtable[,2], eigentime=mtable[,4], eigentimr=rtable[,4], 
      bfast=mtable[,5], bfastr=rtable[,5])
 print(bmattym)
-cat("matsize - matrix size in bytes\n")
+cat("osize - matrix size in bytes\n")
 cat("eigentime - all eigensolutions time\n")
 cat("buildi - interpreted build time, range\n")
 cat("bfast - interpreted vectorized build time\n")
@@ -78,7 +82,7 @@ cat("Times converted to milliseconds\n")
 ## ----drawtime1, echo=FALSE-----------------------------------------------------------------------------------------------------------------------
 ti<-as.vector(mtable[,2])
 tf<-as.vector(mtable[,5])
-matsize<-as.vector(mtable[,3])
+os<-as.vector(mtable[,3])
 n<-as.vector(mtable[,1])
 plot(n, ti)
 xx<-1:max(mtable[,1])
@@ -99,11 +103,11 @@ title(sub="molermat (black) and molerfast (red) matrix builds")
 
 
 ## ----drawtime2, echo=FALSE-----------------------------------------------------------------------------------------------------------------------
-matsizmod<-lm(matsize~n+n2)
-summary(matsizmod)
-cos<-coef(matsizmod)
+osize<-lm(os~n+n2)
+summary(osize)
+cos<-coef(osize)
 zz<-cos[1]+cos[2]*xx+cos[3]*xx*xx
-plot(n, matsize)
+plot(n, os)
 points(xx, zz, type='l')
 title(main="Execution time vs matrix size")
 title(sub="eigen() on Moler matrix")
@@ -251,35 +255,40 @@ print(adjtym)
 
 ## ----rqtime1, echo=FALSE, cache=TRUE-------------------------------------------------------------------------------------------------------------
 dyn.load("moler.so")
-  n<-500
+nn <- 5
+ctdi<-ct1i<-ct2i<-ct3fi<-ct3ri<-rep(NA, nn)
+for (ii in 1:nn){
+  n<-100*ii
   x<-runif(n) # generate a vector 
   AA<-molermat(n)
   tdi<-microbenchmark(rdi<-rqdir(x, AA))$time
-  cat("Direct algorithm: ",msect(tdi),"sd=",msecr(tdi),"\n")
+#  cat("Direct algorithm: ",msect(tdi),"sd=",msecr(tdi),"\n")
+  ctdi[ii]<-msect(tdi)
   t1i<-microbenchmark(r1i<-ray1(x, AA))$time
-  cat("ray1: mat-mult algorithm: ",msect(t1i),"sd=",msecr(t1i),"\n")
+#  cat("ray1: mat-mult algorithm: ",msect(t1i),"sd=",msecr(t1i),"\n")
+  ct1i[ii]<-msect(t1i)
   t2i<-microbenchmark(r2i<-ray2(x, AA))$time
-  cat("ray2: crossprod algorithm: ",msect(t2i),"sd=",msecr(t2i),"\n")
+#  cat("ray2: crossprod algorithm: ",msect(t2i),"sd=",msecr(t2i),"\n")
+  ct2i[ii]<-msect(t2i)
   t3fi<-microbenchmark(r3i<-ray3(x, AA, ax=axftn))$time
-  cat("ray3: ax Fortran + crossprod: ",mean(t3fi)*0.001,"\n")
+#  cat("ray3: ax Fortran + crossprod: ",mean(t3fi)*0.001,"\n")
+  ct3fi[ii]<-msect(t3fi)
   t3ri<-microbenchmark(r3i<-ray3(x, AA, ax=axmolerfast))$time
-  cat("ray3: ax fast R implicit + crossprod: ",msect(t3ri),"sd=",msecr(t3ri),"\n")
+#  cat("ray3: ax fast R implicit + crossprod: ",msect(t3ri),"sd=",msecr(t3ri),"\n")
+  ct3ri[ii]<-msect(t3ri)
+}
+
+mvmul<-data.frame(direct=ctdi, matmul=ct1i, crossprod=ct2i, ftncross=ct3fi, impcross=ct3ri)
+print(mvmul)
+cat("direct - looped a*x\n")
+cat("matmul - A %% x\n")
+cat("crossprod - A * X via crossprod\n")
+cat("ftncross - Fortran + crossprod \n")
+cat("impcross - A * x fast R implicit matrix + crossprod \n")
 
 
 ## ----rayspg1, echo=TRUE, cache=TRUE--------------------------------------------------------------------------------------------------------------
 # spgRQ.R
-molerfast <- function(n) {
-  # A fast version of `molermat'
-  A <- matrix(0, nrow = n, ncol = n)
-  j <- 1:n
-  for (i in 1:n) {
-    A[i, 1:i] <- pmin(i, 1:i) - 2
-  }
-  A <- A + t(A)
-  diag(A) <- 1:n
-  A
-}
-
 rqfast<-function(x){
   rq<-as.numeric(t(x) %*% axmolerfast(x))
   rq
@@ -312,33 +321,35 @@ avecmax<-sign(avecmax[1])*avecmax/sqrt(as.numeric(crossprod(avecmax)))
 avecmin<-sign(avecmin[1])*avecmin/sqrt(as.numeric(crossprod(avecmin)))
 cat("minimal eigensolution: Value=",amin$value,"in time ",
       msect(tmin),"sd=",msecr(tmin),"\n")
-cat("Eigenvalue - result from eigen=",amin$value-evalmin,"  vector max(abs(diff))=",
+cat("(Eigenvalue - result from eigen)=",amin$value-evalmin,"  vector max(abs(diff))=",
     max(abs(avecmin-evecmin)),"\n")
 #print(amin$par)
 cat("maximal eigensolution: Value=",-amax$value,"in time ",
      msect(tmax),"sd=",msecr(tmax),"\n")
-cat("Eigenvalue - result from eigen=",-amax$value-evalmax,"  vector max(abs(diff))=",
+cat("(Eigenvalue - result from eigen)=",-amax$value-evalmax,"  vector max(abs(diff))=",
     max(abs(avecmax-evecmax)),"\n")
 
-# nmax<-5
-# stable<-matrix(NA, nrow=nmax, ncol=4) # to hold results
-# # =========== works to here, but spg is slower than eigen
-# # loop over sizes
-# for (ni in 1:nmax){
-#   n<-50*ni
-#   x<-runif(n) # generate a vector 
-#   AA<-molerfast(n) # make sure defined
-#   stable[[ni, 1]]<-n
-#   tbld<-microbenchmark(AA<-molerfast(n), times=mbt)
-#   tspg<-microbenchmark(aspg<-spg(x, fn=rqneg, project=proj, 
-#                                  control=list(trace=FALSE)), times=mbt)
-#   teig<-microbenchmark(aseig<-eigen(AA), times=mbt)
-#   stable[[ni, 2]]<-msect(tspg$time)
-#   stable[[ni, 3]]<-msect(tbld$time)
-#   stable[[ni, 4]]<-msect(teig$time)
-# }
-# spgtym<-data.frame(n=stable[,1], spgrqt=stable[,2], tbld=stable[,3], teig=stable[,4])
-# print(round(spgtym,0))
+
+## ----rayspg2, echo=FALSE, cache=TRUE-------------------------------------------------------------------------------------------------------------
+nmax<-5
+stable<-matrix(NA, nrow=nmax, ncol=4) # to hold results
+# =========== works to here, but spg is slower than eigen
+# loop over sizes
+for (ni in 1:nmax){
+  n<-50*ni
+  x<-runif(n) # generate a vector 
+  AA<-molerfast(n) # make sure defined
+  stable[[ni, 1]]<-n
+  tbld<-microbenchmark(AA<-molerfast(n), times=mbt)
+  tspg<-microbenchmark(aspg<-spg(x, fn=rqneg, project=proj, 
+                                 control=list(trace=FALSE)), times=mbt)
+  teig<-microbenchmark(aseig<-eigen(AA), times=mbt)
+  stable[[ni, 2]]<-msect(tspg$time)
+  stable[[ni, 3]]<-msect(tbld$time)
+  stable[[ni, 4]]<-msect(teig$time)
+}
+spgtym<-data.frame(n=stable[,1], spgrqt=stable[,2], tbld=stable[,3], teig=stable[,4])
+print(round(spgtym,0))
 
 
 ## ----runopx1, echo=TRUE, cache=TRUE--------------------------------------------------------------------------------------------------------------
@@ -531,7 +542,7 @@ naxftn<-function(x, A) { # ignore second argument
 
 require(microbenchmark)
 nmax<-5
-gtable<-matrix(NA, nrow=nmax, ncol=6) # to hold results
+gtable<-matrix(NA, nrow=nmax, ncol=4) # to hold results
 # loop over sizes
 for (ni in 1:nmax){
   n<-100*ni
@@ -551,21 +562,26 @@ gtym<-data.frame(n=gtable[,1], ax=gtable[,2], aximp=gtable[,3], axftn=gtable[,4]
 print(gtym)
 
 
-# ## ----gerinr1, echo=TRUE, cache=TRUE--------------------------------------------------------------------------------------------------------------
-# x<-runif(n)
-# evalmax<-emax$evalmax
-# evecmac<-emax$evecmax
-# ogaxftn<-geradin(x, naxftn, ident, AA=1, BB=1, control=list(trace=FALSE))
-# gvec<-ogaxftn$x
-# gval<- -ogaxftn$RQ
-# gvec<-sign(gvec[[1]])*gvec/sqrt(as.numeric(crossprod(gvec)))
-# diff<-gvec-evecmax
-# cat("Geradin eigenvalue - eigen result: ",gval-evalmax,"   max(abs(vector diff))=",
-#        max(abs(diff)), "\n")
+## ----gerinr1, echo=TRUE, cache=TRUE--------------------------------------------------------------------------------------------------------------
+for (n in c(100, 200, 300, 400, 500) ) {
+x<-runif(n)
+evalmax<-emax$evalmax
+# evecmax<-emax$evecmax
+ogaxftn<-geradin(x, naxftn, ident, AA=1, BB=1, control=list(trace=FALSE))
+gvec<-ogaxftn$x
+gval<- -ogaxftn$RQ
+gvec<-sign(gvec[[1]])*gvec/sqrt(as.numeric(crossprod(gvec)))
+diff<-gvec-evecmax
+cat("Geradin eigenvalue - eigen result: ",gval-evalmax,"   max(abs(vector diff))=",
+      max(abs(diff)), "\n")
+}
 
 
-
+## ----cmpa25, echo=TRUE---------------------------------------------------------------------------------------------------------------------------
 system("gfortran ./a25moler.f")
+
+
+## ----fger, echo=FALSE, cache=TRUE----------------------------------------------------------------------------------------------------------------
 cat("Geradin fortran version a25moler.f")
 tbld100<-msect(microbenchmark(AA<-molerfast(100), times=mbt)$time)
 teig100<-msect(microbenchmark(a100<-eigen(AA), times=mbt)$time)
