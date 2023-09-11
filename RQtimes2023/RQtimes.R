@@ -1,11 +1,15 @@
+## ----setup, echo=FALSE---------------------------------------------------------------------------------------------------------------------------
+mbt<-25 # default to 5 repetitions in microbenchmark while sorting out text
+msect<-function(times){
+   round(mean(times)*0.001,0)
+}
+msecr<-function(times){
+#   round((max(times)-min(times))*0.001,0)
+   round(sd(times)*0.001,0)
+}
 
-## @knitr setup
-# size takes valid value of LaTeX font sizes like small, big, huge, ...
-# opts_chunk$set(size = 'scriptsize', fig.pos='htbp')
-opts_chunk$set(size = 'scriptsize')
 
-
-## @knitr molermat
+## ----molermat, echo=TRUE-------------------------------------------------------------------------------------------------------------------------
 molermat<-function(n){
    A<-matrix(NA, nrow=n, ncol=n)
    for (i in 1:n){
@@ -18,110 +22,126 @@ molermat<-function(n){
 }
 
 
-## @knitr molerfast
+## ----molerfast, echo=TRUE------------------------------------------------------------------------------------------------------------------------
 molerfast <- function(n) {
 # A fast version of `molermat'
-A <- matrix(0, nrow = n, ncol = n)
-j <- 1:n
-for (i in 1:n) {
-A[i, 1:i] <- pmin(i, 1:i) - 2
-}
-A <- A + t(A)
-diag(A) <- 1:n
-A
+  A <- matrix(0, nrow = n, ncol = n)
+  j <- 1:n
+  for (i in 1:n) {
+    A[i, 1:i] <- pmin(i, 1:i) - 2
+  }
+  A <- A + t(A)
+  diag(A) <- 1:n
+  A
 }
 
 
-## @knitr molertime
-nmax<-10
-mtable<-matrix(NA, nrow=nmax, ncol=7) # to hold results
-require(compiler)
-molerc<-cmpfun(molermat) # compile it
-molerfc<-cmpfun(molerfast)
+## ----mnolertime, echo=FALSE, cache=TRUE----------------------------------------------------------------------------------------------------------
+require(microbenchmark)
+nmax<-5
+mtable<-matrix(NA, nrow=nmax, ncol=5) # to hold results
+rtable<-mtable
 # loop over sizes
 for (ni in 1:nmax){
-  n<-50*ni
+  n<-100*ni
   mtable[[ni, 1]]<-n
-  ti<-system.time(ai<-molermat(n))[[1]]
-  tc<-system.time(ac<-molerc(n))[[1]]
-  if (! identical(ai, ac)) stop("Different outcomes == molermat, molerc")
-  tfi<-system.time(afi<-molerfast(n))[[1]]
-  tfc<-system.time(afc<-molerfc(n))[[1]]
+  rtable[[ni, 1]]<-n
+  # Note "unit" argument is ONLY for display. time is in nanoseconds
+  ti<-microbenchmark(ai<-molermat(n), unit="us", times=mbt)$time
+  tfi<-microbenchmark(afi<-molerfast(n), unit="us", times=mbt)$time
   if (! identical(ai, afi)) stop("Different outcomes == molermat, molerfast")
-  osize<-object.size(ac)
-  tevs<-system.time(evs<-eigen(ac))[[1]]
-  mtable[[ni,2]]<-ti
-  mtable[[ni,3]]<-tc
-  mtable[[ni,4]]<-osize
-  mtable[[ni,5]]<-tevs
-  mtable[[ni,6]]<-tfi
-  mtable[[ni,7]]<-tfc
-# cat(n, ti, tc, osize,"\n")
+  matsize<-as.numeric(object.size(ai))
+  tevs<-microbenchmark(evs<-eigen(ai), unit="us", times=mbt)$time
+  mtable[[ni,2]]<-msect(ti) 
+  mtable[[ni,3]]<-matsize
+  mtable[[ni,4]]<-msect(tevs)
+  mtable[[ni,5]]<-msect(tfi)
+  rtable[[ni,2]]<-msecr(ti) 
+  rtable[[ni,3]]<-matsize
+  rtable[[ni,4]]<-msecr(tevs)
+  rtable[[ni,5]]<-msecr(tfi)
 }
 
 
-## @knitr molertimedisp
-bmattym<-data.frame(n=mtable[,1], buildi=mtable[,2], buildc=mtable[,3], 
-     osize=mtable[,4], eigentime=mtable[,5], bfast=mtable[,6],
-     bfastc=mtable[,7])
+## ----molertimedisp, echo=FALSE-------------------------------------------------------------------------------------------------------------------
+bmattym<-data.frame(n=mtable[,1], matsize=mtable[,3], buildi=mtable[,2],
+     buildir=rtable[,2], eigentime=mtable[,4], eigentimr=rtable[,4], 
+     bfast=mtable[,5], bfastr=rtable[,5])
 print(bmattym)
-cat("buildi - interpreted build time; buildc - byte compiled build time\n")
-cat("osize - matrix size in bytes; eigentime - all eigensolutions time\n")
-cat("bfast - interpreted vectorized build time; bfastc - same code, byte compiled time\n")
+cat("matsize - matrix size in bytes\n")
+cat("eigentime - all eigensolutions time\n")
+cat("buildi - interpreted build time, range\n")
+cat("bfast - interpreted vectorized build time\n")
+cat("Times converted to milliseconds\n")
 
 
-## @knitr drawtime1
+## ----drawtime1, echo=FALSE-----------------------------------------------------------------------------------------------------------------------
 ti<-as.vector(mtable[,2])
-tc<-as.vector(mtable[,3])
-os<-as.vector(mtable[,4])
+tf<-as.vector(mtable[,5])
+matsize<-as.vector(mtable[,3])
 n<-as.vector(mtable[,1])
 plot(n, ti)
-title(main="Execution time vs matrix size")
-title(sub="Regular Moler matrix routine, interpreted and byte compiled")
-points(n, tc, pch=3, col='red')
-legend(50,1,c("interpreted","byte compiled"), pch = c(1,3))
+xx<-1:max(mtable[,1])
 n2<-n*n
 itime<-lm(ti~n+n2)
 summary(itime)
-ctime<-lm(tc~n+n2)
-summary(ctime)
-osize<-lm(os~n+n2)
-summary(osize)
+ftime<-lm(tf~n+n2)
+summary(ftime)
+iti<-coef(itime)
+yy<-iti[1]+iti[2]*xx+iti[3]*xx*xx
+points(xx,yy, type='l')
+fti<-coef(ftime)
+ww<-fti[1]+fti[2]*xx+fti[3]*xx*xx
+points(n, tf, col='red')
+points(xx, ww, type='l', col='red')
+title(main="Execution time vs matrix size")
+title(sub="molermat (black) and molerfast (red) matrix builds")
 
 
-## @knitr rqdir
+## ----drawtime2, echo=FALSE-----------------------------------------------------------------------------------------------------------------------
+matsizmod<-lm(matsize~n+n2)
+summary(matsizmod)
+cos<-coef(matsizmod)
+zz<-cos[1]+cos[2]*xx+cos[3]*xx*xx
+plot(n, matsize)
+points(xx, zz, type='l')
+title(main="Execution time vs matrix size")
+title(sub="eigen() on Moler matrix")
+
+
+## ----rqdir, echo=TRUE----------------------------------------------------------------------------------------------------------------------------
 rqdir<-function(x, AA){
   rq<-0.0
   n<-length(x) # assume x, AA conformable
   for (i in 1:n) {
      for (j in 1:n) {
-        rq<-rq-x[i]*AA[[i,j]]*x[j] # Note - sign
+        rq<-rq+x[i]*AA[[i,j]]*x[j]
      }
   }
   rq
 }
 
 
-## @knitr raynum1
+## ----raynum1, echo=TRUE--------------------------------------------------------------------------------------------------------------------------
 ray1<-function(x, AA){
-    rq<- - t(x)%*%AA%*%x
+    rq<-  t(x)%*%AA%*%x
 }
 
 
-## @knitr raynum2
+## ----raynum2, echo=TRUE--------------------------------------------------------------------------------------------------------------------------
 ray2<-function(x, AA){
-    rq<- - as.numeric(crossprod(x, crossprod(AA,x)))
+    rq<-  as.numeric(crossprod(x, crossprod(AA,x)))
 }
 
 
-## @knitr raynum3
+## ----raynum3, echo=TRUE--------------------------------------------------------------------------------------------------------------------------
 ray3<-function(x, AA, ax=axftn){
     # ax is a function to form AA%*%x 
     rq<- - as.numeric(crossprod(x, ax(x, AA)))
 }
 
 
-## @knitr axm
+## ----axm, echo=TRUE------------------------------------------------------------------------------------------------------------------------------
 ax<-function(x, AA){
    u<- as.numeric(AA%*%x)
 }
@@ -131,7 +151,7 @@ axx<-function(x, AA){
 }
 
 
-## @knitr aximp
+## ----aximp, echo=TRUE----------------------------------------------------------------------------------------------------------------------------
 aximp<-function(x, AA=1){ # implicit moler A*x
    n<-length(x)
    y<-rep(0,n)
@@ -148,7 +168,7 @@ aximp<-function(x, AA=1){ # implicit moler A*x
 ident<-function(x, B=1) x # identity
 
 
-## @knitr axmfcode
+## ----axmfcode, echo=TRUE-------------------------------------------------------------------------------------------------------------------------
 axmolerfast <- function(x, AA=1) {
 # A fast and memory-saving version of A%*%x  
 # For Moler matrix. Note we need a matrix argument to match other functions
@@ -164,7 +184,7 @@ ax
 }
 
 
-## @knitr axftn
+## ----axftn, echo=TRUE----------------------------------------------------------------------------------------------------------------------------
 dyn.load("moler.so")
 cat("Is the mat multiply loaded? ",is.loaded("moler"),"\n")
 
@@ -175,166 +195,154 @@ axftn<-function(x, AA=1) { # ignore second argument
 }
 
 
-## @knitr cmpfns
-require(compiler)
-axc<-cmpfun(ax)
-axxc<-cmpfun(axx)
-axftnc<-cmpfun(axftn)
-aximpc<-cmpfun(aximp)
-axmfc<-cmpfun(axmolerfast)
-
-
-## @knitr timeax1
+## ----timeax1, echo=TRUE, cache=TRUE--------------------------------------------------------------------------------------------------------------
 dyn.load("moler.so")
 cat("Is the mat multiply loaded? ",is.loaded("moler"),"\n")
 require(microbenchmark)
-nmax<-10
+nmax<-5
 ptable<-matrix(NA, nrow=nmax, ncol=11) # to hold results
 # loop over sizes
 for (ni in 1:nmax){
-  n<-50*ni
+  n<-100*ni
   x<-runif(n) # generate a vector 
   ptable[[ni, 1]]<-n
   AA<-molermat(n)
-  tax<-system.time(oax<-replicate(100,ax(x, AA))[,1])[[1]]
-  taxc<-system.time(oaxc<-replicate(100,axc(x, AA))[,1])[[1]]
-  if (! identical(oax, oaxc)) stop("oaxc NOT correct")
-  taxx<-system.time(oaxx<-replicate(100,axx(x, AA))[,1])[[1]]
+  tax<- microbenchmark(oax<-ax(x, AA), times=mbt)$time
+  taxx<-microbenchmark(oaxx<-axx(x, AA), times=mbt)$time
   if (! identical(oax, oaxx)) stop("oaxx NOT correct")
-  taxxc<-system.time(oaxxc<-replicate(100,axxc(x, AA))[,1])[[1]]
-  if (! identical(oax, oaxxc)) stop("oaxxc NOT correct")
-  taxftn<-system.time(oaxftn<-replicate(100,axftn(x, AA=1))[,1])[[1]]
+  taxftn<-microbenchmark(oaxftn<-axftn(x, AA=1), times=mbt)$time
   if (! identical(oax, oaxftn)) stop("oaxftn NOT correct")
-  taxftnc<-system.time(oaxftnc<-replicate(100,axftnc(x, AA=1))[,1])[[1]]
-  if (! identical(oax, oaxftnc)) stop("oaxftnc NOT correct")
-  taximp<-system.time(oaximp<-replicate(100,aximp(x, AA=1))[,1])[[1]]
+  taximp<-microbenchmark(oaximp<-aximp(x, AA=1), times=mbt)$time
   if (! identical(oax, oaximp)) stop("oaximp NOT correct")
-  taximpc<-system.time(oaximpc<-replicate(100,aximpc(x, AA=1))[,1])[[1]]
-  if (! identical(oax, oaximpc)) stop("oaximpc NOT correct")
-  taxmfi<-system.time(oaxmfi<-replicate(100,axmolerfast(x, AA=1))[,1])[[1]]
+  taxmfi<-microbenchmark(oaxmfi<-axmolerfast(x, AA=1), times=mbt)$time
   if (! identical(oax, oaxmfi)) stop("oaxmfi NOT correct")
-  taxmfc<-system.time(oaxmfc<-replicate(100,axmfc(x, AA=1))[,1])[[1]]
-  if (! identical(oax, oaxmfc)) stop("oaxmfc NOT correct")
-  ptable[[ni, 2]]<-tax
-  ptable[[ni, 3]]<-taxc
-  ptable[[ni, 4]]<-taxx
-  ptable[[ni, 5]]<-taxxc
-  ptable[[ni, 6]]<-taxftn
-  ptable[[ni, 7]]<-taxftnc
-  ptable[[ni, 8]]<-taximp
-  ptable[[ni, 9]]<-taximpc
-  ptable[[ni, 10]]<-taxmfi
-  ptable[[ni, 11]]<-taxmfc
-#  cat(n,tax, taxc, taxx, taxxc, taxftn, taxftnc, taximp, taximpc,"\n")
+  ptable[[ni, 2]]<-msect(tax); ptable[[ni,3]]<-msecr(tax)
+  ptable[[ni, 4]]<-msect(taxx); ptable[[ni, 5]]<-msecr(taxx)
+  ptable[[ni, 6]]<-msect(taxftn); ptable[[ni, 7]]<-msecr(taxftn)
+  ptable[[ni, 8]]<-msect(taximp); ptable[[ni,9]]<-msecr(taximp)
+  ptable[[ni, 10]]<-msect(taxmfi); ptable[[ni,11]]<-msecr(taxmfi)
 }
-axtym<-data.frame(n=ptable[,1], ax=ptable[,2], axc=ptable[,3], 
-  axx=ptable[,4], axxc=ptable[,5],
-  axftn=ptable[,6], axftnc=ptable[,7], 
-  aximp=ptable[,8], aximpc=ptable[,9], axmfast=ptable[,10],
-  amfastc=ptable[,11])
+
+axtym<-data.frame(n=ptable[,1], ax=ptable[,2], sd_ax=ptable[,3],  axx=ptable[,4],
+                  sd_axx=ptable[,5],  axftn=ptable[,6], sd_axftn=ptable[,7], 
+                  aximp=ptable[,8], sd_aximp=ptable[,9], 
+                  axmfast=ptable[,10], sd_axmfast=ptable[,11])
 print(axtym)
 
 
-## @knitr adjaxtime
-adjtym<-data.frame(n=axtym$n, axx1=axtym$axx+1*bmattym$buildi, 
-     axxz=axtym$axx+100*bmattym$buildi, 
-     axxc1=axtym$axxc+1*bmattym$buildc,axxcz=axtym$axxc+100*bmattym$buildc,
-     axftn=axtym$axftn, aximp=axtym$aximp, aximpc=axtym$aximpc)
+## ----extabl1, echo=FALSE-------------------------------------------------------------------------------------------------------------------------
+# explain table
+expln <- c("ax = R matrix * vector  A %*% x",
+   "axx = R crossprod A, x",
+   "axftn = Fortran version of implicit Moler A * x",
+   "aximp = implicit moler A*x in R",
+   "axmfast = A fast and memory-saving version of A %*% x",
+   "Times in milliseconds from microbenchmark")
+for (exx in expln) { cat(exx,"\n")}
+
+
+## ----adjaxtime, echo=FALSE-----------------------------------------------------------------------------------------------------------------------
+cat("Times (in millisecs) adjusted for matrix build\n")
+adjtym<-data.frame(n=axtym$n, axbld=axtym$ax+bmattym$buildi, 
+     axxbld=axtym$axx+bmattym$buildi, 
+     axftn=axtym$axftn, aximp=axtym$aximp)
 print(adjtym)
 
 
-## @knitr rqtime1
-require(compiler)
-rqdirc<-cmpfun(rqdir)
-ray1c<-cmpfun(ray1)
-ray2c<-cmpfun(ray2)
-ray3c<-cmpfun(ray3)
+## ----rqtime1, echo=FALSE, cache=TRUE-------------------------------------------------------------------------------------------------------------
 dyn.load("moler.so")
   n<-500
   x<-runif(n) # generate a vector 
   AA<-molermat(n)
-  tdi<-system.time(rdi<-replicate(100,rqdir(x, AA))[1])[[1]]
-  tdc<-system.time(replicate(100,rdc<-rqdirc(x, AA))[1])[[1]]
-  cat("Direct algorithm: interpreted=",tdi,"   byte-compiled=",tdc,"\n")
-  t1i<-system.time(replicate(100,r1i<-ray1(x, AA))[1])[[1]]
-  t1c<-system.time(replicate(100,r1c<-ray1c(x, AA))[1])[[1]]
-  cat("ray1: mat-mult algorithm: interpreted=",t1i,"   byte-compiled=",t1c,"\n")
-  t2i<-system.time(replicate(100,r2i<-ray2(x, AA))[1])[[1]]
-  t2c<-system.time(replicate(100,r2c<-ray2c(x, AA))[1])[[1]]
-  cat("ray2: crossprod algorithm: interpreted=",t2i,"   byte-compiled=",t2c,"\n")
-  t3fi<-system.time(replicate(100,r3i<-ray3(x, AA, ax=axftn))[1])[[1]]
-  t3fc<-system.time(replicate(100,r3i<-ray3c(x, AA, ax=axftnc))[1])[[1]]
-  cat("ray3: ax Fortran + crossprod: interpreted=",t3fi,"   byte-compiled=",t3fc,"\n")
-  t3ri<-system.time(replicate(100,r3i<-ray3(x, AA, ax=axmolerfast))[1])[[1]]
-  t3rc<-system.time(replicate(100,r3i<-ray3c(x, AA, ax=axmfc))[1])[[1]]
-  cat("ray3: ax fast R implicit + crossprod: interpreted=",t3ri,"   byte-compiled=",t3rc,"\n")
+  tdi<-microbenchmark(rdi<-rqdir(x, AA))$time
+  cat("Direct algorithm: ",msect(tdi),"sd=",msecr(tdi),"\n")
+  t1i<-microbenchmark(r1i<-ray1(x, AA))$time
+  cat("ray1: mat-mult algorithm: ",msect(t1i),"sd=",msecr(t1i),"\n")
+  t2i<-microbenchmark(r2i<-ray2(x, AA))$time
+  cat("ray2: crossprod algorithm: ",msect(t2i),"sd=",msecr(t2i),"\n")
+  t3fi<-microbenchmark(r3i<-ray3(x, AA, ax=axftn))$time
+  cat("ray3: ax Fortran + crossprod: ",mean(t3fi)*0.001,"\n")
+  t3ri<-microbenchmark(r3i<-ray3(x, AA, ax=axmolerfast))$time
+  cat("ray3: ax fast R implicit + crossprod: ",msect(t3ri),"sd=",msecr(t3ri),"\n")
 
 
-## @knitr rayspg1
-rqt<-function(x, AA){
-    rq<-as.numeric(crossprod(x, crossprod(AA,x)))
+## ----rayspg1, echo=TRUE, cache=TRUE--------------------------------------------------------------------------------------------------------------
+# spgRQ.R
+molerfast <- function(n) {
+  # A fast version of `molermat'
+  A <- matrix(0, nrow = n, ncol = n)
+  j <- 1:n
+  for (i in 1:n) {
+    A[i, 1:i] <- pmin(i, 1:i) - 2
+  }
+  A <- A + t(A)
+  diag(A) <- 1:n
+  A
 }
-proj<-function(x) { x/sqrt(crossprod(x)) }
+
+rqfast<-function(x){
+  rq<-as.numeric(t(x) %*% axmolerfast(x))
+  rq
+}
+rqneg<-function(x) { -rqfast(x)}
+proj <- function(x) {sign(x[1]) * x/sqrt(c(crossprod(x))) } # from ravi
+# Note that the c() is needed in denominator to avoid error msgs
 require(BB)
 n<-100
 x<-rep(1,n)
-AA<-molermat(n)
-evs<-eigen(AA)
-tmin<-system.time(amin<-spg(x, fn=rqt, project=proj, control=list(trace=FALSE), AA=AA))[[1]]
-#amin
-tmax<-system.time(amax<-spg(x, fn=rqt, project=proj, control=list(trace=FALSE), AA=-AA))[[1]]
-#amax
+x<-x/as.numeric(sqrt(crossprod(x)))
+AA<-molerfast(n)
+teig<-microbenchmark(evs<-eigen(AA), times=mbt)$time
+cat("eigen time =", msect(teig),"sd=",msecr(teig),"\n")
+tmin<-microbenchmark(amin<-spg(x, fn=rqfast, project=proj, 
+                               control=list(trace=FALSE)), times=mbt)$time
+tmax<-microbenchmark(amax<-spg(x, fn=rqneg, project=proj, 
+                               control=list(trace=FALSE)), times=mbt)$time
 evalmax<-evs$values[1]
 evecmax<-evs$vectors[,1]
-evecmax<-sign(evecmax[1])*evecmax/sqrt(as.numeric(crossprod(evecmax)))
-emax<-list(evalmax=evalmax, evecmac=evecmax)
-save(emax, "temax.Rdata")
+evecmax<-sign(evecmax[1])*evecmax/sqrt(as.numeric(crossprod(evecmax))) # normalize
+emax<-list(evalmax=evalmax, evecmax=evecmax)
 evalmin<-evs$values[n]
 evecmin<-evs$vectors[,n]
 evecmin<-sign(evecmin[1])*evecmin/sqrt(as.numeric(crossprod(evecmin)))
+emin<-list(evalmin=evalmin, evecmin=evecmin)
 avecmax<-amax$par
 avecmin<-amin$par
 avecmax<-sign(avecmax[1])*avecmax/sqrt(as.numeric(crossprod(avecmax)))
 avecmin<-sign(avecmin[1])*avecmin/sqrt(as.numeric(crossprod(avecmin)))
-cat("minimal eigensolution: Value=",amin$value,"in time ",tmin,"\n")
+cat("minimal eigensolution: Value=",amin$value,"in time ",
+      msect(tmin),"sd=",msecr(tmin),"\n")
 cat("Eigenvalue - result from eigen=",amin$value-evalmin,"  vector max(abs(diff))=",
-      max(abs(avecmin-evecmin)),"\n\n")
+    max(abs(avecmin-evecmin)),"\n")
 #print(amin$par)
-cat("maximal eigensolution: Value=",-amax$value,"in time ",tmax,"\n")
+cat("maximal eigensolution: Value=",-amax$value,"in time ",
+     msect(tmax),"sd=",msecr(tmax),"\n")
 cat("Eigenvalue - result from eigen=",-amax$value-evalmax,"  vector max(abs(diff))=",
-      max(abs(avecmax-evecmax)),"\n\n")
-#print(amax$par)
+    max(abs(avecmax-evecmax)),"\n")
+
+# nmax<-5
+# stable<-matrix(NA, nrow=nmax, ncol=4) # to hold results
+# # =========== works to here, but spg is slower than eigen
+# # loop over sizes
+# for (ni in 1:nmax){
+#   n<-50*ni
+#   x<-runif(n) # generate a vector 
+#   AA<-molerfast(n) # make sure defined
+#   stable[[ni, 1]]<-n
+#   tbld<-microbenchmark(AA<-molerfast(n), times=mbt)
+#   tspg<-microbenchmark(aspg<-spg(x, fn=rqneg, project=proj, 
+#                                  control=list(trace=FALSE)), times=mbt)
+#   teig<-microbenchmark(aseig<-eigen(AA), times=mbt)
+#   stable[[ni, 2]]<-msect(tspg$time)
+#   stable[[ni, 3]]<-msect(tbld$time)
+#   stable[[ni, 4]]<-msect(teig$time)
+# }
+# spgtym<-data.frame(n=stable[,1], spgrqt=stable[,2], tbld=stable[,3], teig=stable[,4])
+# print(round(spgtym,0))
 
 
-## @knitr runspg2
-require(compiler)
-require(BB)
-nmax<-10
-stable<-matrix(NA, nrow=nmax, ncol=4) # to hold results
-spgc<-cmpfun(spg)
-rqtc<-cmpfun(rqt)
-projc<-cmpfun(proj)
-
-# loop over sizes
-for (ni in 1:nmax){
-  n<-50*ni
-  x<-runif(n) # generate a vector 
-  AA<-molerc(n) # make sure defined
-  stable[[ni, 1]]<-n
-  tbld<-system.time(AA<-molerc(n))[[1]]
-  tspg<-system.time(aspg<-spg(x, fn=rqt, project=proj, control=list(trace=FALSE), AA=-AA))[[1]]
-  tspgc<-system.time(aspgc<-spgc(x, fn=rqtc, project=projc, control=list(trace=FALSE), AA=-AA))[[1]]
-  stable[[ni, 2]]<-tspg
-  stable[[ni, 3]]<-tspgc
-  stable[[ni, 4]]<-tbld
-#  cat(n,tspg, tspgc,tbld,"\n")
-# times too short
-}
-spgtym<-data.frame(n=stable[,1], spgrqt=stable[,2], spgcrqtcaxc=stable[,3], tbldc=stable[,4])
-print(spgtym)
-
-
-## @knitr runopx1
+## ----runopx1, echo=TRUE, cache=TRUE--------------------------------------------------------------------------------------------------------------
+require(optimx)
 nobj<-function(x, AA=-AA){
    y<-x/sqrt(as.numeric(crossprod(x)))
    rq<- as.numeric(crossprod(y, crossprod(AA,y)))
@@ -350,37 +358,35 @@ ngrobj<-function(x, AA=-AA){
    gy<- as.vector(2.*crossprod(AA,y))
    gg<-as.numeric(crossprod(gy, gt))
 } 
-require(optplus)
-# mset<-c("L-BFGS-B", "BFGS", "CG", "spg", "ucminf", "nlm", "nlminb", "Rvmmin", "Rcgmin")
-mset<-c("L-BFGS-B", "BFGS", "CG", "spg", "ucminf", "nlm", "nlminb", "Rvmmin", "Rcgmin")
-nmax<-5
+mset<-c("L-BFGS-B", "BFGS", "ncg", "spg", "ucminf", "nlm", "nlminb", "nvm")
 for (ni in 1:nmax){
   n<-20*ni
   x<-runif(n) # generate a vector 
-  AA<-molerc(n) # make sure defined
-  aall<-optimx(x, fn=nobj, gr=ngrobj, method=mset, AA=-AA, 
-     control=list(starttests=FALSE, dowarn=FALSE))
-  optansout(aall, NULL)
-  cat("Above for n=",n," \n")
+  AA<-molerfast(n) # make sure defined
+  aall<-opm(x, fn=nobj, gr=ngrobj, method=mset, AA=-AA, 
+     control=list(trace=0,starttests=FALSE, dowarn=FALSE, kkt=FALSE))
+  # optansout(aall, NULL)
+  summary(aall, order=value, )
 }
 
 
-## @knitr rcgrun1
+## ----rcgrun1, echo=TRUE,cache=TRUE---------------------------------------------------------------------------------------------------------------
 ctable<-matrix(NA, nrow=10, ncol=2)
-nmax<-10
+nmax<-5
 for (ni in 1:nmax){
   n<-50*ni
   x<-runif(n) # generate a vector 
-  AA<-molerc(n) # make sure defined
-  tcgu<-system.time(arcgu<-Rcgminu(x, fn=nobj, gr=ngrobj, AA=-AA))[[1]]
+  AA<-molerfast(n) # define matrix
+  tcgu<-microbenchmark(arcgu<-optimr(x, fn=nobj, gr=ngrobj, method="ncg",
+          AA=-AA), times=mbt)
   ctable[[ni,1]]<-n
-  ctable[[ni,2]]<-tcgu
+  ctable[[ni,2]]<-mean(tcgu$time)*0.001
 }
-cgtime<-data.frame(n=ctable[,1], tRcgminu=ctable[,2])
-print(cgtime)
+cgtime<-data.frame(n=ctable[,1], tcgmin=ctable[,2])
+print(round(cgtime,0))
 
 
-## @knitr geradincode
+## ----geradincode, echo=FALSE,cache=TRUE----------------------------------------------------------------------------------------------------------
 ax<-function(x, AA){
    u<-as.numeric(AA%*%x)
 }
@@ -480,25 +486,25 @@ geradin<-function(x, ax, bx, AA, BB, control=list(trace=TRUE, maxit=1000)){
 }
 
 
-## @knitr rungeradin1
+## ----rungeradin10, echo=TRUE, cache=TRUE---------------------------------------------------------------------------------------------------------
 cat("Test geradin with explicit matrix multiplication\n")
 n<-10
-AA<-molermat(n)
+AA<-molerfast(n)
 BB=diag(rep(1,n))
 x<-runif(n)
-tg<-system.time(ag<-geradin(x, ax, bx, AA=AA, BB=BB, 
-   control=list(trace=FALSE)))[[1]]
+tg<-microbenchmark(ag<-geradin(x, ax, bx, AA=AA, BB=BB, 
+   control=list(trace=FALSE)), times=mbt)
 cat("Minimal eigensolution\n")
 print(ag)
-cat("Geradin time=",tg,"\n")
-tgn<-system.time(agn<-geradin(x, ax, bx, AA=-AA, BB=BB,
-   control=list(trace=FALSE)))[[1]]
+cat("Geradin time=",msect(tg$time),"sd=",msecr(tg$time),"\n")
+tgn<-microbenchmark(agn<-geradin(x, ax, bx, AA=-AA, BB=BB,
+   control=list(trace=FALSE)), times=mbt)
 cat("Maximal eigensolution (negative matrix)\n")
 print(agn)
-cat("Geradin time=",tgn,"\n")
+cat("Geradin time=",msect(tgn$time),"sd=",msecr(tgn$time),"\n")
 
 
-## @knitr timeger1
+## ----timeger1, echo=TRUE-------------------------------------------------------------------------------------------------------------------------
 naximp<-function(x, A=1){ # implicit moler A*x
    n<-length(x)
    y<-rep(0,n)
@@ -519,70 +525,157 @@ cat("Is the mat multiply loaded? ",is.loaded("moler"),"\n")
 naxftn<-function(x, A) { # ignore second argument
    n<-length(x) # could speed up by having this passed
    vout<-rep(0,n) # purely for storage
+   # NEED TO EXPLAIN -1 below
    res<-(-1)*(.Fortran("moler", n=as.integer(n), x=as.double(x), vout=as.double(vout)))$vout
 }
 
-require(compiler)
-naxftnc<-cmpfun(naxftn)
-naximpc<-cmpfun(naximp)
-
 require(microbenchmark)
-nmax<-10
+nmax<-5
 gtable<-matrix(NA, nrow=nmax, ncol=6) # to hold results
 # loop over sizes
 for (ni in 1:nmax){
-  n<-50*ni
+  n<-100*ni
   x<-runif(n) # generate a vector 
   gtable[[ni, 1]]<-n
   AA<-molermat(n)
   BB<-diag(rep(1,n))
-  tgax<-system.time(ogax<-geradin(x, ax, bx, AA=-AA, BB=BB, control=list(trace=FALSE)))[[1]]
-  gtable[[ni, 2]]<-tgax
-  tgaximp<-system.time(ogaximp<-geradin(x, naximp, ident, AA=1, BB=1, control=list(trace=FALSE)))[[1]]
-  gtable[[ni, 3]]<-tgaximp
-  tgaximpc<-system.time(ogaximpc<-geradin(x, naximpc, ident, AA=1, BB=1, control=list(trace=FALSE)))[[1]]
-  gtable[[ni, 4]]<-tgaximpc
-  tgaxftn<-system.time(ogaxftn<-geradin(x, naxftn, ident, AA=1, BB=1, control=list(trace=FALSE)))[[1]]
-  gtable[[ni, 5]]<-tgaxftn
-  tgaxftnc<-system.time(ogaxftnc<-geradin(x, naxftnc, ident, AA=1, BB=1, control=list(trace=FALSE)))[[1]]
-  gtable[[ni, 6]]<-tgaxftnc
-#  cat(n,tgax, tgaximp, tgaximpc, tgaxftn, tgaxftnc,"\n")
+  tgax<-microbenchmark(ogax<-geradin(x, ax, bx, AA=-AA, BB=BB, control=list(trace=FALSE)), times=mbt)
+  gtable[[ni, 2]]<-msect(tgax$time)
+  tgaximp<-microbenchmark(ogaximp<-geradin(x, naximp, ident, AA=1, BB=1, control=list(trace=FALSE)), times=mbt)
+  gtable[[ni, 3]]<-msect(tgaximp$time)
+  tgaxftn<-microbenchmark(ogaxftn<-geradin(x, naxftn, ident, AA=1, BB=1, control=list(trace=FALSE)), times=mbt)
+  gtable[[ni, 4]]<-msect(tgaxftn$time)
 }
 
-gtym<-data.frame(n=gtable[,1], ax=gtable[,2], aximp=gtable[,3], 
-  aximpc=gtable[,4], axftn=gtable[,5], axftnc=gtable[,6])
+gtym<-data.frame(n=gtable[,1], ax=gtable[,2], aximp=gtable[,3], axftn=gtable[,4])
 print(gtym)
 
 
-## @knitr gercheck1
-n<-100
-x<-runif(n)
-emax<-load("temax.Rdata")
-evalmax<-emax$evalmax
-evecmac<-emax$evecmax
-ogaxftn<-geradin(x, naxftn, ident, AA=1, BB=1, control=list(trace=FALSE))
-gvec<-ogaxftn$x
-gval<- -ogaxftn$RQ
-gvec<-sign(gvec[[1]])*gvec/sqrt(as.numeric(crossprod(gvec)))
-diff<-gvec-evecmax
-cat("Geradin diff eigenval from eigen result: ",gval-evalmax,"   max(abs(vector diff))=",
-      max(abs(diff)), "\n")
+# ## ----gerinr1, echo=TRUE, cache=TRUE--------------------------------------------------------------------------------------------------------------
+# x<-runif(n)
+# evalmax<-emax$evalmax
+# evecmac<-emax$evecmax
+# ogaxftn<-geradin(x, naxftn, ident, AA=1, BB=1, control=list(trace=FALSE))
+# gvec<-ogaxftn$x
+# gval<- -ogaxftn$RQ
+# gvec<-sign(gvec[[1]])*gvec/sqrt(as.numeric(crossprod(gvec)))
+# diff<-gvec-evecmax
+# cat("Geradin eigenvalue - eigen result: ",gval-evalmax,"   max(abs(vector diff))=",
+#        max(abs(diff)), "\n")
 
 
-## @knitr persp1
-cf<-data.frame(
-    n=bmattym$n,
+
+system("gfortran ./a25moler.f")
+cat("Geradin fortran version a25moler.f")
+tbld100<-msect(microbenchmark(AA<-molerfast(100), times=mbt)$time)
+teig100<-msect(microbenchmark(a100<-eigen(AA), times=mbt)$time)
+cat("eigen(): n=100 build time=",tbld100,"  eigen time=",teig100,"\n")
+vecmin<-a100$vectors[,100]
+vecmax<-a100$vectors[,1]
+cat("eigen: Minimal Eigenvalue =",a100$values[100],"  RQ=", ray1(vecmin, AA),"\n")
+tmin100<-msect(microbenchmark(system("./a.out <n100min.txt > out100min.txt"), times=mbt)$time)
+res<-strsplit(readLines("out100min.txt"), " ")
+resn<-as.numeric(res[[1]][which(res[[1]]!="")])
+cat("A25RQM N=", as.integer(resn[1]), " matvec ops=", as.integer(resn[2]),
+     " Min Est. EV=", resn[3], "  Gradient=",resn[4]," time=",msect(tmin100)," \n")
+tmax100<-msect(microbenchmark(system("./a.out <n100max.txt > out100max.txt"), times=mbt)$time)
+res<-strsplit(readLines("out100max.txt"), " ")
+resn<-as.numeric(res[[1]][which(res[[1]]!="")])
+cat("A25RQM N=", as.integer(resn[1]), " matvec ops=", as.integer(resn[2]),
+     " Max Est. EV=", resn[3], "  Gradient=",resn[4]," time=",msect(tmax100)," \n")
+cat("eigen: Maximal Eigenvalue =",a100$values[1],"  RQ=", ray1(vecmax, AA),"\n")
+
+
+tbld200<-msect(microbenchmark(AA<-molerfast(200), times=mbt)$time)
+teig200<-msect(microbenchmark(a200<-eigen(AA), times=mbt)$time)
+cat("eigen(): n=200 build time=",tbld200,"  eigen time=",teig200,"\n")
+vecmin<-a200$vectors[,200]
+vecmax<-a200$vectors[,1]
+cat("eigen: Minimal Eigenvalue =",a200$values[200],"  RQ=", ray1(vecmin, AA),"\n")
+tmin200<-msect(microbenchmark(system("./a.out <n200min.txt > out200min.txt"), times=mbt)$time)
+res<-strsplit(readLines("out200min.txt"), " ")
+resn<-as.numeric(res[[1]][which(res[[1]]!="")])
+cat("A25RQM N=", as.integer(resn[1]), " matvec ops=", as.integer(resn[2]),
+     " Min Est. EV=", resn[3], "  Gradient=",resn[4]," time=",msect(tmin200)," \n")
+tmax200<-msect(microbenchmark(system("./a.out <n200max.txt > out200max.txt"), times=mbt)$time)
+res<-strsplit(readLines("out200max.txt"), " ")
+resn<-as.numeric(res[[1]][which(res[[1]]!="")])
+cat("A25RQM N=", as.integer(resn[1]), " matvec ops=", as.integer(resn[2]),
+     " Max Est. EV=", resn[3], "  Gradient=",resn[4]," time=",msect(tmax200)," \n")
+cat("eigen: Maximal Eigenvalue =",a200$values[1],"  RQ=", ray1(vecmax, AA),"\n")
+
+
+tbld300<-msect(microbenchmark(AA<-molerfast(300), times=mbt)$time)
+teig300<-msect(microbenchmark(a300<-eigen(AA), times=mbt)$time)
+cat("eigen(): n=300 build time=",tbld300,"  eigen time=",teig300,"\n")
+vecmin<-a300$vectors[,300]
+vecmax<-a300$vectors[,1]
+cat("eigen: Minimal Eigenvalue =",a300$values[300],"  RQ=", ray1(vecmin, AA),"\n")
+tmin300<-msect(microbenchmark(system("./a.out <n300min.txt > out300min.txt"), times=mbt)$time)
+res<-strsplit(readLines("out300min.txt"), " ")
+resn<-as.numeric(res[[1]][which(res[[1]]!="")])
+cat("A25RQM N=", as.integer(resn[1]), " matvec ops=", as.integer(resn[2]),
+     " Min Est. EV=", resn[3], "  Gradient=",resn[4]," time=",msect(tmin300)," \n")
+tmax300<-msect(microbenchmark(system("./a.out <n300max.txt > out300max.txt"), times=mbt)$time)
+res<-strsplit(readLines("out300max.txt"), " ")
+resn<-as.numeric(res[[1]][which(res[[1]]!="")])
+cat("A25RQM N=", as.integer(resn[1]), " matvec ops=", as.integer(resn[2]),
+     " Max Est. EV=", resn[3], "  Gradient=",resn[4]," time=",msect(tmax300)," \n")
+cat("eigen: Maximal Eigenvalue =",a300$values[1],"  RQ=", ray1(vecmax, AA),"\n")
+
+
+tbld400<-msect(microbenchmark(AA<-molerfast(400), times=mbt)$time)
+teig400<-msect(microbenchmark(a400<-eigen(AA), times=mbt)$time)
+cat("eigen(): n=400 build time=",tbld400,"  eigen time=",teig400,"\n")
+vecmin<-a400$vectors[,400]
+vecmax<-a400$vectors[,1]
+cat("eigen: Minimal Eigenvalue =",a400$values[400],"  RQ=", ray1(vecmin, AA),"\n")
+tmin400<-msect(microbenchmark(system("./a.out <n400min.txt > out400min.txt"), times=mbt)$time)
+res<-strsplit(readLines("out400min.txt"), " ")
+resn<-as.numeric(res[[1]][which(res[[1]]!="")])
+cat("A25RQM N=", as.integer(resn[1]), " matvec ops=", as.integer(resn[2]),
+     " Min Est. EV=", resn[3], "  Gradient=",resn[4]," time=",msect(tmin400)," \n")
+tmax400<-msect(microbenchmark(system("./a.out <n400max.txt > out400max.txt"), times=mbt)$time)
+res<-strsplit(readLines("out400max.txt"), " ")
+resn<-as.numeric(res[[1]][which(res[[1]]!="")])
+cat("A25RQM N=", as.integer(resn[1]), " matvec ops=", as.integer(resn[2]),
+     " Max Est. EV=", resn[3], "  Gradient=",resn[4]," time=",msect(tmax400)," \n")
+cat("eigen: Maximal Eigenvalue =",a400$values[1],"  RQ=", ray1(vecmax, AA),"\n")
+
+
+tbld500<-msect(microbenchmark(AA<-molerfast(500), times=mbt)$time)
+teig500<-msect(microbenchmark(a500<-eigen(AA), times=mbt)$time)
+cat("eigen(): n=500 build time=",tbld500,"  eigen time=",teig500,"\n")
+vecmin<-a500$vectors[,500]
+vecmax<-a500$vectors[,1]
+cat("eigen: Minimal Eigenvalue =",a500$values[500],"  RQ=", ray1(vecmin, AA),"\n")
+tmin500<-msect(microbenchmark(system("./a.out <n500min.txt > out500min.txt"), times=mbt)$time)
+res<-strsplit(readLines("out500min.txt"), " ")
+resn<-as.numeric(res[[1]][which(res[[1]]!="")])
+cat("A25RQM N=", as.integer(resn[1]), " matvec ops=", as.integer(resn[2]),
+     " Min Est. EV=", resn[3], "  Gradient=",resn[4]," time=",msect(tmin500)," \n")
+tmax500<-msect(microbenchmark(system("./a.out <n500max.txt > out500max.txt"), times=mbt)$time)
+res<-strsplit(readLines("out500max.txt"), " ")
+resn<-as.numeric(res[[1]][which(res[[1]]!="")])
+cat("A25RQM N=", as.integer(resn[1]), " matvec ops=", as.integer(resn[2]),
+     " Max Est. EV=", resn[3], "  Gradient=",resn[4]," time=",msect(tmax500)," \n")
+cat("eigen: Maximal Eigenvalue =",a500$values[1],"  RQ=", ray1(vecmax, AA),"\n")
+
+
+
+## ----persp1, echo=FALSE--------------------------------------------------------------------------------------------------------------------------
+library(optimx)
+cf<-data.frame(n=bmattym$n,
     eig=bmattym$eigentime,
-    spg=spgtym$spgcrqtcaxc,
-    rcg=cgtime$tRcgminu,
-    ger=gtym$axftnc
-)
+    spg=spgtym$spgrqt,
+    rcg=cgtime$tcgmin,
+    ger=gtym$axftn )
 eigen<-cf$eig/cf$ger
 spg<-cf$spg/cf$ger
 rcgmin<-cf$rcg/cf$ger
 nsize<-cf$n
 jn<-data.frame(nsize=nsize, eigen=eigen, spg=spg, rcgmin=rcgmin)
-joe<-write.csv(jn, file="jndata.csv")
+# joe<-write.csv(jn, file="jndata.csv")
 plot(nsize,spg, pch=1, xlab="n", ylab="time ratio")
 points(nsize, rcgmin, pch=3)
 points(nsize, eigen, pch=4)
@@ -592,21 +685,21 @@ points(nsize, rep(1,10), type="l")
 legend(50,70,c("spg", "rcgmin","eigen"), pch = c(1,3,4))
 
 
-
-## @knitr n2000a
+## ----n2000a, echo=FALSE--------------------------------------------------------------------------------------------------------------------------
 dyn.load("moler.so")
 n<-2000
-t2000b<-system.time(AA<-molerc(n))[[1]]
-t2000e<-system.time(evs<-eigen(AA))[[1]]
+t2000b<-msect(microbenchmark(AA<-molerfast(n), times=mbt)$time)
+t2000e<-msect(microbenchmark(evs<-eigen(AA), times=mbt)$time)
 x<-runif(n)
-t2000c<-system.time(ac<-Rcgminu(x, fn=nobj, gr=ngrobj, AA=-AA))[[1]]
-t2000g<-system.time(ag<-geradin(x, naxftnc, ident, AA=1, BB=1, control=list(trace=FALSE)))[[1]]
+t2000c<-msect(microbenchmark(ac<-optimr(x, fn=nobj, gr=ngrobj, method="ncg", 
+                              AA=-AA), times=mbt)$time)
+t2000g<-msect(microbenchmark(ag<-geradin(x, naxftn, ident, AA=1, BB=1, control=list(trace=FALSE)), times=mbt)$time)
 cat("Times in seconds\n")
 cat("Build =",t2000b," eigen():",t2000e,"  Rcgminu:", t2000c," Geradin:",t2000g,"\n")
 cat("Ratios: build=", t2000b/t2000g, "eigen=",t2000e/t2000g,"  Rcgminu=",t2000c/t2000g,"\n")
 
 
-## @knitr geradincodea
+## ----geradincodea, echo=TRUE---------------------------------------------------------------------------------------------------------------------
 ax<-function(x, AA){
    u<-as.numeric(AA%*%x)
 }
@@ -701,5 +794,4 @@ geradin<-function(x, ax, bx, AA, BB, control=list(trace=TRUE, maxit=1000)){
   } # end main loop -- step 25
   ans<-list(x=x, RQ=p0, ipr=ipr, msg=msg) # step 26
 }
-
 
