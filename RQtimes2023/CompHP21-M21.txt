@@ -1,0 +1,43 @@
+HP21:
+
+To check the value of the Geradin approach in R, let us use a much larger problem, with n=2000.
+## Times in seconds
+## Build = 79846
+eigen(): 7328904
+Rcgminu: 313078
+## Ratios: build= 0.2106771 eigen= 19.33763
+Geradin: 378997
+Rcgminu= 0.8260699
+
+
+M21: 
+
+To check the value of the Geradin approach in R, let us use a much larger problem, with n=2000.
+## Times in seconds
+## Build = 79513
+eigen(): 932744
+Rcgminu: 346102
+## Ratios: build= 0.2775788 eigen= 3.256197
+Geradin: 286452
+Rcgminu= 1.208237
+
+
+HP21: Build = 79846  eigen(): 7328904  Rcgminu: 313078    Geradin: 378997
+M21:  Build = 79513  eigen():  932744  Rcgminu: 346102    Geradin: 286452
+
+
+HP21: 
+CPU: 8-core AMD Ryzen 7 5700U with Radeon Graphics (-MT MCP-)
+speed/min/max: 1554/1400/4370 
+MHz Kernel: 6.2.0-32-generic x86_64 Up: 2h 47m
+Mem: 1021.9/15319.3 MiB (6.7%) 
+Storage: 1.16 TiB (62.3% used) Procs: 331
+Shell: Bash inxi: 3.3.13
+
+M21:
+CPU: 6-core Intel Core i5-10400 (-MT MCP-) 
+speed/min/max: 3215/800/4300 MHz
+Kernel: 6.2.0-32-generic x86_64 Up: 5h 46m 
+Mem: 4361.1/31904.8 MiB (13.7%)
+Storage: 2.67 TiB (39.0% used) Procs: 416 
+Shell: Bash inxi: 3.3.13
