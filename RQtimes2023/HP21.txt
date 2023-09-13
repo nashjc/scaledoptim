@@ -1,0 +1,4 @@
+CPU: 8-core AMD Ryzen 7 5700U with Radeon Graphics (-MT MCP-)
+speed/min/max: 1554/1400/4370 MHz Kernel: 6.2.0-32-generic x86_64 Up: 2h 47m
+Mem: 1021.9/15319.3 MiB (6.7%) Storage: 1.16 TiB (62.3% used) Procs: 331
+Shell: Bash inxi: 3.3.13
