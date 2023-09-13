@@ -1062,7 +1062,7 @@ with `n=2000`.
 
 ```{r n2000a, echo=FALSE}
 dyn.load("moler.so")
-n<-20000
+n<-2000
 t2000b<-msect(microbenchmark(AA<-molerfast(n), times=mbt)$time)
 t2000e<-msect(microbenchmark(evs<-eigen(AA), times=mbt)$time)
 x<-runif(n)
