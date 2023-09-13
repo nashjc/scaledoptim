@@ -1,0 +1,3 @@
+CPU: 6-core Intel Core i5-10400 (-MT MCP-) speed/min/max: 3215/800/4300 MHz
+Kernel: 6.2.0-32-generic x86_64 Up: 5h 46m Mem: 4361.1/31904.8 MiB (13.7%)
+Storage: 2.67 TiB (39.0% used) Procs: 416 Shell: Bash inxi: 3.3.13
