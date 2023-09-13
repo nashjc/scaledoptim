@@ -33,7 +33,7 @@ urlcolor: blue
 ---
 
 ```{r setup, echo=FALSE}
-mbt<-2 # default to 5 repetitions in microbenchmark while sorting out text
+mbt<-25 # default to 5 repetitions in microbenchmark while sorting out text
 msect<-function(times){
    round(mean(times)*0.001,0)
 }
@@ -1054,13 +1054,15 @@ print(jn)
 # legend(50,70,c("spg", "rcgmin","eigen"), pch = c(1,3,4))
 ```
 
+We see here that the `ncg` approach and that of the standard `eigen()` are
+competitive with Geradin, but `spg()` takes a great deal of time.
 
-To check the value of the Geradin approach, let us use a much larger problem,
+To check the value of the Geradin approach in R, let us use a much larger problem,
 with `n=2000`. 
 
 ```{r n2000a, echo=FALSE}
 dyn.load("moler.so")
-n<-2000
+n<-20000
 t2000b<-msect(microbenchmark(AA<-molerfast(n), times=mbt)$time)
 t2000e<-msect(microbenchmark(evs<-eigen(AA), times=mbt)$time)
 x<-runif(n)
@@ -1073,28 +1075,24 @@ cat("Ratios: build=", t2000b/t2000g, "eigen=",t2000e/t2000g,"  Rcgminu=",t2000c/
 ```
 
 
-## Conclusions}
+## Conclusions
 
 The Rayleigh Quotient minimization approach to eigensolutions has an 
-intuitive appeal and seemingly offers an interesting optimization 
-test problem, especially if we can make it computationally efficient.
-To improve time efficiency, we can apply the R byte code compiler, 
-use a Fortran (or other compiled language) subroutine, and choose
-how we set up our objective functions and gradients. To improve
-memory use, we can consider using a matrix implicitly.
+intuitive appeal and offers an interesting optimization 
+test problem. As an eigensolution tool, given the efficiency of
+standard methods such as R's `eigen()`, it is of limited utility.
+On the other hand, in special cases, especially using implicit matrix
+multiply to avoid storing a large matrix, it may be valuable.
 
 From the tests in this vignette, here is what we may say about these
 attempts, which we caution are based on a relatively small sample of
 tests:
 
+- Fortran may be worth using to speed up calculations such 
+as the implicit matrix-vector product, though it does demand
+much more programming effort. We did not, for example, choose
+to try `.Call` or `.C64` approaches because of the overhead.
 
-- The R byte code compiler offers a useful gain in speed when 
-our code has statements that access array elements rather than uses
-them in vectorized form.}
-- The `crossprod()` function is very efficient.
-- Fortran is not very difficult to use for small subroutines
-that compute a function such as the implicit matrix-vector product, 
-and it allows efficient computations for such operations.
 - The `eigen()` routine is a highly effective tool for
 computing all eigensolutions, even of a large matrix. It is only
 worth computing a single solution when the matrix is very large,
